@@ -37,6 +37,8 @@ export interface FetchResponse {
   pull_request: PullRequestRecord;
   authored_diff_path: string;
   review_threads: ReviewThread[];
+  /** Non-empty top-level review bodies. No checkpoint or reply exists for these. */
+  review_summaries: ReviewComment[];
 }
 
 export interface ReviewThreadReply {

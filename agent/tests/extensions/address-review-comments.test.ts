@@ -105,7 +105,7 @@ test("starts diff and review-thread requests concurrently", async () => {
 
   diff.resolve(success("diff --git a/file.ts b/file.ts\n"));
   threads.resolve(success(emptyThreadsResponse));
-  assert.deepEqual(await request, { diff: "diff --git a/file.ts b/file.ts\n", threads: [] });
+  assert.deepEqual(await request, { diff: "diff --git a/file.ts b/file.ts\n", threads: [], reviews: [] });
 });
 
 test("maps review-thread pagination and fetches extra comment pages", async () => {
@@ -119,6 +119,15 @@ test("maps review-thread pagination and fetches extra comment pages", async () =
           data: {
             repository: {
               pullRequest: {
+                reviews: {
+                  nodes: [
+                    { body: "", author: { __typename: "User", login: "approver" } },
+                    {
+                      body: "Overall looks good, but please add tests.",
+                      author: { __typename: "User", login: "reviewer" },
+                    },
+                  ],
+                },
                 reviewThreads: {
                   nodes: [
                     {
@@ -134,6 +143,11 @@ test("maps review-thread pagination and fetches extra comment pages", async () =
                             body: "First",
                             diffHunk: "@@ -1 +1 @@",
                             author: { __typename: "User", login: "reviewer" },
+                          },
+                          {
+                            body: "Fixed.\n\n> `pi` agent using `address-review-comments`, supervised by @supervisor",
+                            diffHunk: "",
+                            author: { __typename: "User", login: "author" },
                           },
                         ],
                         pageInfo: { hasNextPage: true, endCursor: "comments-next" },
@@ -173,7 +187,10 @@ test("maps review-thread pagination and fetches extra comment pages", async () =
   };
 
   const result = await new GitHubClient(exec, "/repo").fetchReviewThreads("owner/repo", 42);
-  assert.deepEqual(result, [
+  assert.deepEqual(result.reviews, [
+    { body: "Overall looks good, but please add tests.", author: "reviewer", author_is_bot: false },
+  ]);
+  assert.deepEqual(result.threads, [
     {
       id: "thread-1",
       is_resolved: false,
@@ -184,6 +201,7 @@ test("maps review-thread pagination and fetches extra comment pages", async () =
       current_end_line: 12,
       comments: [
         { body: "First", author: "reviewer", author_is_bot: false },
+        { body: "Fixed.", author: "author", author_is_bot: false },
         { body: "Bot follow-up", author: "custom-review-bot", author_is_bot: true },
       ],
     },
@@ -291,6 +309,7 @@ test("keeps workflow requests and fetch artifacts in one temporary directory", a
           head_sha: "abc123",
         },
         review_threads: [],
+        review_summaries: [],
       },
     );
     const replyRequestPath = await writeReplyRequest(paths.directory, {

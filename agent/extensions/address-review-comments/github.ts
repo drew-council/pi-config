@@ -1,3 +1,4 @@
+import { stripReplyAttribution } from "./attribution.js";
 import type {
   CommandExecutor,
   PullRequestRecord,
@@ -12,6 +13,12 @@ const THREADS_QUERY = `
 query($owner: String!, $name: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
+      reviews(first: 100) {
+        nodes {
+          body
+          author { __typename login }
+        }
+      }
       reviewThreads(first: 100, after: $after) {
         nodes {
           id
@@ -158,7 +165,7 @@ function isBot(author: GraphqlAuthor | null | undefined): boolean {
 
 function mapComment(comment: GraphqlComment): ReviewComment {
   return {
-    body: comment.body ?? "",
+    body: stripReplyAttribution(comment.body ?? ""),
     author: comment.author?.login ?? null,
     author_is_bot: isBot(comment.author),
   };
@@ -287,25 +294,34 @@ export class GitHubClient {
     };
   }
 
-  async fetchReviewThreads(repository: string, pullNumber: number, signal?: AbortSignal): Promise<ReviewThread[]> {
+  async fetchReviewThreads(
+    repository: string,
+    pullNumber: number,
+    signal?: AbortSignal,
+  ): Promise<{ threads: ReviewThread[]; reviews: ReviewComment[] }> {
     const { owner, name } = splitRepository(repository);
     const threads: ReviewThread[] = [];
+    let reviews: ReviewComment[] = [];
     let after: string | undefined;
     do {
       const response = await this.graphql<{
         repository?: {
           pullRequest?: {
+            reviews?: { nodes?: GraphqlComment[] };
             reviewThreads?: { nodes?: GraphqlThread[]; pageInfo?: PageInfo };
           } | null;
         } | null;
       }>(THREADS_QUERY, { owner, name, number: pullNumber, after }, { signal });
       const connection = response.repository?.pullRequest?.reviewThreads;
       if (!connection) throw new Error(`PR #${pullNumber} was not found in ${repository}.`);
+      reviews = (response.repository?.pullRequest?.reviews?.nodes ?? [])
+        .map(mapComment)
+        .filter((review) => review.body.trim() !== "");
       // Extra comment pages are fetched concurrently across threads in this page.
       threads.push(...(await Promise.all((connection.nodes ?? []).map((node) => this.mapThread(node, signal)))));
       after = connection.pageInfo?.hasNextPage ? (connection.pageInfo.endCursor ?? undefined) : undefined;
     } while (after);
-    return threads;
+    return { threads, reviews };
   }
 
   async replyToThread(threadId: string, body: string, signal?: AbortSignal): Promise<ReviewThreadReply> {
@@ -393,7 +409,7 @@ export async function fetchGitHubReviewData(
   loadDiff: () => Promise<string>,
   signal?: AbortSignal,
   onComplete?: (part: "diff" | "threads") => void,
-): Promise<{ diff: string; threads: ReviewThread[] }> {
+): Promise<{ diff: string; threads: ReviewThread[]; reviews: ReviewComment[] }> {
   const [diffResult, threadsResult] = await Promise.allSettled([
     loadDiff().then((value) => {
       onComplete?.("diff");
@@ -406,5 +422,5 @@ export async function fetchGitHubReviewData(
   ]);
   if (diffResult.status === "rejected") throw diffResult.reason;
   if (threadsResult.status === "rejected") throw threadsResult.reason;
-  return { diff: diffResult.value, threads: threadsResult.value };
+  return { diff: diffResult.value, ...threadsResult.value };
 }

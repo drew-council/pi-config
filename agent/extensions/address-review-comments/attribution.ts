@@ -5,6 +5,13 @@ export function replyAttribution(githubUsername: string): string {
   return `> \`pi\` agent using \`${REVIEW_COMMAND_NAME}\`, supervised by @${githubUsername}`;
 }
 
+const ATTRIBUTION_PATTERN = new RegExp(`\\s*> \`pi\` agent using \`${REVIEW_COMMAND_NAME}\`, supervised by @\\S+\\s*$`);
+
+/** Removes the supervised-agent footer so it does not clutter the agent's context. It still lives in the posted reply. */
+export function stripReplyAttribution(body: string): string {
+  return body.replace(ATTRIBUTION_PATTERN, "");
+}
+
 export function appendReplyAttribution(body: string, githubUsername: string): string {
   const trimmedBody = body.trimEnd();
   const attribution = replyAttribution(githubUsername);

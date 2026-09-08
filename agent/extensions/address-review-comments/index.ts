@@ -193,6 +193,7 @@ export default function addressReviewCommentsExtension(pi: ExtensionAPI): void {
         github_username: githubUsername,
         pull_request: pull,
         review_threads: unresolved,
+        review_summaries: githubData.reviews,
       };
       const response = await writeFetchArtifacts(
         artifactPaths,

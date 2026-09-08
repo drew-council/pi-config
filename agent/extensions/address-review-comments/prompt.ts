@@ -55,6 +55,7 @@ ${summary}
 - Summarize the unresolved review threads, then proceed immediately. Do not ask whether to proceed.
 - Process review threads one at a time until each is resolved, posted, skipped, flagged, or the user selects abort.
 - Never fix unrelated review issues together. Comments about the same issue/fix may be grouped.
+- \`review_summaries\` in the fetch JSON holds each reviewer's top-level review comment. There is no checkpoint or reply for these, but any actionable feedback in them must still be addressed: fold it into the related thread when one exists, otherwise make the change directly and mention it in your final summary.
 - Never run GitHub review-thread mutations or legacy review-comment commands yourself.
 - For every reply decision, including outdated threads, call \`${CHECKPOINT_TOOL_NAME}\`. The tool owns human approval, posting, and resolution.
 - A reply is submitted only when \`${CHECKPOINT_TOOL_NAME}\` returns \`resolve\` or \`post\` with the structured GitHub response.
@@ -74,7 +75,7 @@ Keep replies concise and adapt the template to the comment.
 
 ## Workflow
 
-1. Inspect the fetch JSON and authored diff to list thread ids, locations, authors, full conversations, outdated status, and diff hunks.
+1. Inspect the fetch JSON and authored diff to list thread ids, locations, authors, full conversations, outdated status, diff hunks, and top-level review comments.
 2. Present a concise summary.
 3. For each thread:
    - Show reviewer, location, diff hunk, and full conversation.
@@ -84,5 +85,6 @@ Keep replies concise and adapt the template to the comment.
    - Make the appropriate code change when needed.
    - Draft a concise reply.
    - Call \`${CHECKPOINT_TOOL_NAME}\` with the thread id, location, checkpoint summary/diff, and exact draft reply.
-4. Summarize addressed, skipped, and flagged threads after all terminal decisions.`;
+4. Address any remaining actionable top-level review feedback that no thread covered.
+5. Summarize addressed, skipped, and flagged threads, plus any top-level feedback handled directly.`;
 }

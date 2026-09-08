@@ -4,7 +4,7 @@ import { type ExtensionAPI, type ExtensionContext, getMarkdownTheme } from "@ear
 import { Markdown, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { writeReplyRequest } from "./artifacts.js";
-import { appendReplyAttribution, createReplyRequest } from "./attribution.js";
+import { appendReplyAttribution, createReplyRequest, stripReplyAttribution } from "./attribution.js";
 import { checkpointAction, ReviewCheckpointDialog } from "./checkpoint-dialog.js";
 import { CHECKPOINT_ENTRY_TYPE, CHECKPOINT_TOOL_NAME, REVIEW_COMMAND } from "./constants.js";
 import { queueCheckpointFeedback } from "./feedback-message.js";
@@ -193,7 +193,10 @@ export function registerCheckpointTool(pi: ExtensionAPI, controller: CheckpointC
             {
               type: "text",
               text: `${error.message}\n\nGitHub reply response:\n\n\`\`\`json\n${JSON.stringify(
-                { thread_id: checkpoint.threadId, reply: error.reply },
+                {
+                  thread_id: checkpoint.threadId,
+                  reply: { ...error.reply, body: stripReplyAttribution(error.reply.body) },
+                },
                 null,
                 2,
               )}\n\`\`\`\n\nDo not post the reply again. Flag the thread as replied-but-unresolved and ${
@@ -222,7 +225,7 @@ export function registerCheckpointTool(pi: ExtensionAPI, controller: CheckpointC
           {
             type: "text",
             text: `User selected ${selectedOption}. GitHub response:\n\n\`\`\`json\n${JSON.stringify(
-              response,
+              { ...response, reply: { ...response.reply, body: stripReplyAttribution(response.reply.body) } },
               null,
               2,
             )}\n\`\`\`\n\n${
