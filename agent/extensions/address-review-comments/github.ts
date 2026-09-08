@@ -2,11 +2,14 @@ import { stripReplyAttribution } from "./attribution.js";
 import type {
   CommandExecutor,
   PullRequestRecord,
+  PullRequestStack,
+  PullRequestStackEntry,
   ReplyResponse,
   ResolvedReviewThread,
   ReviewComment,
   ReviewThread,
   ReviewThreadReply,
+  StackEntryStatus,
 } from "./types.js";
 
 const THREADS_QUERY = `
@@ -37,6 +40,35 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
           }
         }
         pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}`;
+
+const STACK_QUERY = `
+query StackOverview($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      stack {
+        number
+        size
+        baseRefName
+        entries(first: 100, after: $after) {
+          nodes {
+            position
+            pullRequest {
+              number
+              title
+              state
+              isDraft
+              headRefName
+              baseRefName
+              url
+              mergeQueueEntry { id }
+            }
+          }
+          pageInfo { hasNextPage endCursor }
+        }
       }
     }
   }
@@ -124,6 +156,27 @@ interface GraphqlThread {
   comments?: CommentConnection;
 }
 
+interface GraphqlStackEntry {
+  position?: number;
+  pullRequest?: {
+    number?: number;
+    title?: string;
+    state?: string;
+    isDraft?: boolean;
+    headRefName?: string;
+    baseRefName?: string;
+    url?: string;
+    mergeQueueEntry?: { id?: string } | null;
+  } | null;
+}
+
+interface GraphqlStack {
+  number?: number;
+  size?: number;
+  baseRefName?: string;
+  entries?: { nodes?: GraphqlStackEntry[]; pageInfo?: PageInfo };
+}
+
 interface PullView {
   number?: number;
   title?: string;
@@ -161,6 +214,31 @@ function splitRepository(repository: string): { owner: string; name: string } {
 function isBot(author: GraphqlAuthor | null | undefined): boolean {
   const login = author?.login ?? "";
   return author?.__typename === "Bot" || BOT_LOGINS.has(login) || login.toLowerCase().includes("[bot]");
+}
+
+function stackEntryStatus(pull: NonNullable<GraphqlStackEntry["pullRequest"]>): StackEntryStatus {
+  if (pull.state === "MERGED") return "merged";
+  if (pull.state === "CLOSED") return "closed";
+  if (pull.mergeQueueEntry?.id) return "queued";
+  if (pull.isDraft) return "draft";
+  return "open";
+}
+
+function mapStackEntry(entry: GraphqlStackEntry, currentPullNumber: number): PullRequestStackEntry {
+  const pull = entry.pullRequest;
+  if (!pull?.number || entry.position === undefined) {
+    throw new Error("GitHub returned a stack entry without a pull request.");
+  }
+  return {
+    position: entry.position,
+    number: pull.number,
+    title: pull.title ?? "",
+    status: stackEntryStatus(pull),
+    head_branch: pull.headRefName ?? "",
+    base_branch: pull.baseRefName ?? "",
+    url: pull.url ?? "",
+    is_current: pull.number === currentPullNumber,
+  };
 }
 
 function mapComment(comment: GraphqlComment): ReviewComment {
@@ -252,6 +330,34 @@ export class GitHubClient {
       head_branch: pull.headRefName,
       head_sha: pull.headRefOid,
     };
+  }
+
+  /** Returns null when the PR is not part of a GitHub stack. */
+  async fetchPullRequestStack(
+    repository: string,
+    pullNumber: number,
+    signal?: AbortSignal,
+  ): Promise<PullRequestStack | null> {
+    const { owner, name } = splitRepository(repository);
+    let stack: GraphqlStack | null | undefined;
+    const entries: PullRequestStackEntry[] = [];
+    let after: string | undefined;
+    do {
+      const response = await this.graphql<{
+        repository?: { pullRequest?: { stack?: GraphqlStack | null } | null } | null;
+      }>(STACK_QUERY, { owner, name, number: pullNumber, after }, { signal });
+      const pull = response.repository?.pullRequest;
+      if (!pull) throw new Error(`PR #${pullNumber} was not found in ${repository}.`);
+      stack = pull.stack;
+      if (!stack) return null;
+      entries.push(...(stack.entries?.nodes ?? []).map((entry) => mapStackEntry(entry, pullNumber)));
+      after = stack.entries?.pageInfo?.hasNextPage ? (stack.entries.pageInfo.endCursor ?? undefined) : undefined;
+    } while (after);
+    if (stack.number === undefined || !stack.baseRefName) {
+      throw new Error("GitHub returned incomplete stack metadata.");
+    }
+    entries.sort((a, b) => a.position - b.position);
+    return { number: stack.number, trunk: stack.baseRefName, size: stack.size ?? entries.length, entries };
   }
 
   private async fetchAdditionalComments(
@@ -402,15 +508,24 @@ export class GitHubUsernameCache {
   }
 }
 
+export interface GitHubReviewData {
+  diff: string;
+  threads: ReviewThread[];
+  reviews: ReviewComment[];
+  stack: PullRequestStack | null;
+  /** Set when the stack lookup failed; the workflow continues without stack context. */
+  stackError?: string;
+}
+
 export async function fetchGitHubReviewData(
   client: GitHubClient,
   repository: string,
   pullNumber: number,
   loadDiff: () => Promise<string>,
   signal?: AbortSignal,
-  onComplete?: (part: "diff" | "threads") => void,
-): Promise<{ diff: string; threads: ReviewThread[]; reviews: ReviewComment[] }> {
-  const [diffResult, threadsResult] = await Promise.allSettled([
+  onComplete?: (part: "diff" | "threads" | "stack") => void,
+): Promise<GitHubReviewData> {
+  const [diffResult, threadsResult, stackResult] = await Promise.allSettled([
     loadDiff().then((value) => {
       onComplete?.("diff");
       return value;
@@ -419,8 +534,15 @@ export async function fetchGitHubReviewData(
       onComplete?.("threads");
       return value;
     }),
+    client.fetchPullRequestStack(repository, pullNumber, signal).then((value) => {
+      onComplete?.("stack");
+      return value;
+    }),
   ]);
   if (diffResult.status === "rejected") throw diffResult.reason;
   if (threadsResult.status === "rejected") throw threadsResult.reason;
-  return { diff: diffResult.value, ...threadsResult.value };
+  const data: GitHubReviewData = { diff: diffResult.value, ...threadsResult.value, stack: null };
+  if (stackResult.status === "fulfilled") data.stack = stackResult.value;
+  else data.stackError = stackResult.reason instanceof Error ? stackResult.reason.message : String(stackResult.reason);
+  return data;
 }

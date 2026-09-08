@@ -25,6 +25,28 @@ export interface PullRequestRecord {
   head_sha: string;
 }
 
+export type StackEntryStatus = "open" | "draft" | "queued" | "merged" | "closed";
+
+export interface PullRequestStackEntry {
+  /** 1 is closest to the trunk; higher positions are stacked on top of lower ones. */
+  position: number;
+  number: number;
+  title: string;
+  status: StackEntryStatus;
+  head_branch: string;
+  base_branch: string;
+  url: string;
+  is_current: boolean;
+}
+
+export interface PullRequestStack {
+  /** Stack number shown in the GitHub stack UI and accepted by `gh stack checkout`. */
+  number: number;
+  trunk: string;
+  size: number;
+  entries: PullRequestStackEntry[];
+}
+
 export interface FetchRequest {
   repository: string;
   selector: number | string;
@@ -39,6 +61,8 @@ export interface FetchResponse {
   review_threads: ReviewThread[];
   /** Non-empty top-level review bodies. No checkpoint or reply exists for these. */
   review_summaries: ReviewComment[];
+  /** Stack overview when the PR is part of a GitHub stack; null otherwise or when the lookup failed. */
+  stack: PullRequestStack | null;
 }
 
 export interface ReviewThreadReply {

@@ -18,6 +18,7 @@ import {
   GitHubUsernameCache,
   ReviewThreadResolveError,
 } from "../../extensions/address-review-comments/github.js";
+import { summarizeStack } from "../../extensions/address-review-comments/prompt.js";
 import type { CommandExecutor, ExecResult } from "../../extensions/address-review-comments/types.js";
 
 function success(stdout: string): ExecResult {
@@ -84,12 +85,23 @@ const emptyThreadsResponse = JSON.stringify({
   },
 });
 
-test("starts diff and review-thread requests concurrently", async () => {
+const noStackResponse = JSON.stringify({ data: { repository: { pullRequest: { stack: null } } } });
+
+function isStackQuery(args: string[]): boolean {
+  return args.some((arg) => arg.startsWith("query=") && arg.includes("StackOverview"));
+}
+
+test("starts diff, review-thread, and stack requests concurrently", async () => {
   const diff = deferred<ExecResult>();
   const threads = deferred<ExecResult>();
+  const stack = deferred<ExecResult>();
   const started: string[] = [];
   const exec: CommandExecutor = async (_command, args) => {
     if (args[0] === "api" && args[1] === "graphql") {
+      if (isStackQuery(args)) {
+        started.push("stack");
+        return stack.promise;
+      }
       started.push("threads");
       return threads.promise;
     }
@@ -101,11 +113,140 @@ test("starts diff and review-thread requests concurrently", async () => {
     return (await diff.promise).stdout;
   });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(started.sort(), ["diff", "threads"]);
+  assert.deepEqual(started.sort(), ["diff", "stack", "threads"]);
 
   diff.resolve(success("diff --git a/file.ts b/file.ts\n"));
   threads.resolve(success(emptyThreadsResponse));
-  assert.deepEqual(await request, { diff: "diff --git a/file.ts b/file.ts\n", threads: [], reviews: [] });
+  stack.resolve(success(noStackResponse));
+  assert.deepEqual(await request, {
+    diff: "diff --git a/file.ts b/file.ts\n",
+    threads: [],
+    reviews: [],
+    stack: null,
+  });
+});
+
+test("a failed stack lookup does not fail the fetch", async () => {
+  const exec: CommandExecutor = async (_command, args) => {
+    if (isStackQuery(args)) return { code: 1, stdout: "", stderr: "stacks unavailable" };
+    return success(emptyThreadsResponse);
+  };
+  const result = await fetchGitHubReviewData(new GitHubClient(exec, "/repo"), "owner/repo", 42, async () => "");
+  assert.equal(result.stack, null);
+  assert.match(result.stackError ?? "", /stacks unavailable/);
+});
+
+test("maps a stack overview and marks the current PR", async () => {
+  const exec: CommandExecutor = async (_command, args) => {
+    assert.ok(isStackQuery(args));
+    assert.ok(args.includes("number=42"));
+    return success(
+      JSON.stringify({
+        data: {
+          repository: {
+            pullRequest: {
+              stack: {
+                number: 7,
+                size: 3,
+                baseRefName: "main",
+                entries: {
+                  nodes: [
+                    {
+                      position: 3,
+                      pullRequest: {
+                        number: 43,
+                        title: "Add frontend",
+                        state: "OPEN",
+                        isDraft: true,
+                        headRefName: "frontend",
+                        baseRefName: "api",
+                        url: "https://github.test/pull/43",
+                        mergeQueueEntry: null,
+                      },
+                    },
+                    {
+                      position: 1,
+                      pullRequest: {
+                        number: 41,
+                        title: "Add auth",
+                        state: "MERGED",
+                        isDraft: false,
+                        headRefName: "auth",
+                        baseRefName: "main",
+                        url: "https://github.test/pull/41",
+                        mergeQueueEntry: null,
+                      },
+                    },
+                    {
+                      position: 2,
+                      pullRequest: {
+                        number: 42,
+                        title: "Add API routes",
+                        state: "OPEN",
+                        isDraft: false,
+                        headRefName: "api",
+                        baseRefName: "auth",
+                        url: "https://github.test/pull/42",
+                        mergeQueueEntry: { id: "MQE_1" },
+                      },
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+  };
+
+  const stack = await new GitHubClient(exec, "/repo").fetchPullRequestStack("owner/repo", 42);
+  assert.deepEqual(stack, {
+    number: 7,
+    trunk: "main",
+    size: 3,
+    entries: [
+      {
+        position: 1,
+        number: 41,
+        title: "Add auth",
+        status: "merged",
+        head_branch: "auth",
+        base_branch: "main",
+        url: "https://github.test/pull/41",
+        is_current: false,
+      },
+      {
+        position: 2,
+        number: 42,
+        title: "Add API routes",
+        status: "queued",
+        head_branch: "api",
+        base_branch: "auth",
+        url: "https://github.test/pull/42",
+        is_current: true,
+      },
+      {
+        position: 3,
+        number: 43,
+        title: "Add frontend",
+        status: "draft",
+        head_branch: "frontend",
+        base_branch: "api",
+        url: "https://github.test/pull/43",
+        is_current: false,
+      },
+    ],
+  });
+
+  const summary = summarizeStack(stack);
+  assert.ok(summary);
+  assert.match(summary, /^Stack #7 on trunk `main`\. This PR is position 2 of 3/);
+  assert.match(summary, /\n {2}1\. #41 \[merged\] auth <- main {2}Add auth\n/);
+  assert.match(summary, /\n→ 2\. #42 \[queued\] api <- auth {2}Add API routes {2}\(this PR\)\n/);
+  assert.match(summary, /\n {2}3\. #43 \[draft\] frontend <- api {2}Add frontend$/);
+  assert.equal(summarizeStack(null), undefined);
 });
 
 test("maps review-thread pagination and fetches extra comment pages", async () => {
@@ -310,6 +451,7 @@ test("keeps workflow requests and fetch artifacts in one temporary directory", a
         },
         review_threads: [],
         review_summaries: [],
+        stack: null,
       },
     );
     const replyRequestPath = await writeReplyRequest(paths.directory, {

@@ -1,5 +1,21 @@
 import { CHECKPOINT_TOOL_NAME } from "./constants.js";
-import type { FetchResponse, WorkflowState } from "./types.js";
+import type { FetchResponse, PullRequestStack, WorkflowState } from "./types.js";
+
+export function summarizeStack(stack: PullRequestStack | null): string | undefined {
+  if (!stack) return undefined;
+  const current = stack.entries.find((entry) => entry.is_current);
+  const rows = stack.entries.map((entry) => {
+    const marker = entry.is_current ? "→" : " ";
+    const base = entry.base_branch ? ` <- ${entry.base_branch}` : "";
+    const suffix = entry.is_current ? "  (this PR)" : "";
+    return `${marker} ${entry.position}. #${entry.number} [${entry.status}] ${entry.head_branch}${base}  ${entry.title}${suffix}`;
+  });
+  const position = current ? `This PR is position ${current.position} of ${stack.size}` : `${stack.size} PR(s)`;
+  return [
+    `Stack #${stack.number} on trunk \`${stack.trunk}\`. ${position}; position 1 is closest to the trunk and merges first.`,
+    ...rows,
+  ].join("\n");
+}
 
 export function summarizeFetch(payload: FetchResponse): string {
   const threads = payload.review_threads;
@@ -14,11 +30,13 @@ export function summarizeFetch(payload: FetchResponse): string {
     .sort()
     .map((author) => `@${author}`)
     .join(", ");
+  const stack = summarizeStack(payload.stack);
   return [
     `Found ${threads.length} unresolved review thread(s) on PR #${payload.pull_request.number} (${payload.pull_request.title}).`,
     `- ${threads.length - outdated} actionable/current`,
     `- ${outdated} outdated`,
     reviewers ? `- reviewers: ${reviewers}` : undefined,
+    stack ? `\n## Stack context\n\n${stack}` : undefined,
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n");
@@ -56,6 +74,7 @@ ${summary}
 - Process review threads one at a time until each is resolved, posted, skipped, flagged, or the user selects abort.
 - Never fix unrelated review issues together. Comments about the same issue/fix may be grouped.
 - \`review_summaries\` in the fetch JSON holds each reviewer's top-level review comment. There is no checkpoint or reply for these, but any actionable feedback in them must still be addressed: fold it into the related thread when one exists, otherwise make the change directly and mention it in your final summary.
+- \`stack\` in the fetch JSON is non-null when this PR belongs to a GitHub stack. Only this PR's layer is in scope: its diff is relative to the PR directly below it, and code from lower layers is not yours to change here. If a comment belongs to another layer, say so in the reply instead of fixing it. Query \`gh stack view --json\` or \`gh api graphql\` for more stack detail only if you need it.
 - Never run GitHub review-thread mutations or legacy review-comment commands yourself.
 - For every reply decision, including outdated threads, call \`${CHECKPOINT_TOOL_NAME}\`. The tool owns human approval, posting, and resolution.
 - A reply is submitted only when \`${CHECKPOINT_TOOL_NAME}\` returns \`resolve\` or \`post\` with the structured GitHub response.

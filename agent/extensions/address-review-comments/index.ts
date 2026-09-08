@@ -35,13 +35,14 @@ class FetchProgress {
   private checkout = false;
   private diff = false;
   private threads = false;
+  private stack = false;
   private artifacts = false;
 
   constructor(private readonly ctx: ExtensionCommandContext) {
     this.render();
   }
 
-  complete(step: "metadata" | "checkout" | "diff" | "threads" | "artifacts"): void {
+  complete(step: "metadata" | "checkout" | "diff" | "threads" | "stack" | "artifacts"): void {
     this[step] = true;
     this.render();
   }
@@ -52,8 +53,9 @@ class FetchProgress {
 
   private render(): void {
     const item = (done: boolean, label: string) => (done ? `✓ ${label}` : `· ${label}`);
-    const complete = [this.metadata, this.checkout, this.diff, this.threads, this.artifacts].filter(Boolean).length;
-    this.ctx.ui.setStatus(STATUS_ID, this.ctx.ui.theme.fg("warning", `review:fetch ${complete}/5`));
+    const steps = [this.metadata, this.checkout, this.diff, this.threads, this.stack, this.artifacts];
+    const complete = steps.filter(Boolean).length;
+    this.ctx.ui.setStatus(STATUS_ID, this.ctx.ui.theme.fg("warning", `review:fetch ${complete}/${steps.length}`));
     this.ctx.ui.setWidget(
       FETCH_WIDGET_ID,
       (_tui, theme) =>
@@ -65,6 +67,7 @@ class FetchProgress {
               item(this.checkout, "checkout"),
               item(this.diff, "diff"),
               item(this.threads, "threads"),
+              item(this.stack, "stack"),
               item(this.artifacts, "artifacts"),
             ].join("  "),
           ].join("\n"),
@@ -187,6 +190,9 @@ export default function addressReviewCommentsExtension(pi: ExtensionAPI): void {
           progress.complete(part);
         },
       );
+      if (githubData.stackError) {
+        ctx.ui.notify(`Stack lookup failed; continuing without stack context: ${githubData.stackError}`, "warning");
+      }
       const unresolved = githubData.threads.filter((thread) => !thread.is_resolved);
       const responseWithoutPath: Omit<FetchResponse, "authored_diff_path"> = {
         repository,
@@ -194,6 +200,7 @@ export default function addressReviewCommentsExtension(pi: ExtensionAPI): void {
         pull_request: pull,
         review_threads: unresolved,
         review_summaries: githubData.reviews,
+        stack: githubData.stack,
       };
       const response = await writeFetchArtifacts(
         artifactPaths,
