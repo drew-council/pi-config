@@ -11,4 +11,8 @@ export const MODEL_BLACKLIST = [
   // claude-haiku-4-*, and legacy claude-3-* ids from any provider).
   /^claude-(?:(?:opus|sonnet|haiku|fable)-[0-4]|[0-4])(?:[-.]\d+)*(?:$|-)/i,
   /^openrouter\/(?!z-ai\/glm-5\.3-flash$)/i,
+  // GitHub Copilot: whitelist GPT-5.6 and newer (luna/sol/terra, 6.x/astra).
+  // The work profile's Copilot subscription is restricted to those models; GLM
+  // models are not offered on Copilot (GLM-5.3 Flash stays on OpenRouter).
+  /^github-copilot\/(?!gpt-(?:5\.[6-9]|[6-9]))/i,
 ] satisfies readonly RegExp[];
