@@ -24,12 +24,6 @@ syntax or relying on memorized knowledge:
   content.
 - `ntn <command> --help` — help for any command or subcommand.
 
-## Install
-
-```bash
-curl -fsSL https://ntn.dev | bash
-```
-
 ## Authentication
 
 - The CLI automatically uses `NOTION_API_TOKEN` when it is set.
