@@ -3,7 +3,9 @@
   "defaultProvider": "claude-bridge",
   "defaultModel": "claude-fable-5.1",
   "extensions": [],
-  "npmCommand": ["bun"],
+  "npmCommand": [
+    "bun"
+  ],
   "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-web-access",
@@ -12,7 +14,8 @@
       "skills": [],
       "prompts": []
     },
-    "npm:pi-claude-bridge"
+    "npm:pi-claude-bridge",
+    "npm:pi-multi-skills"
   ],
   "theme": "catppuccin-mocha",
   "hideThinkingBlock": true,
