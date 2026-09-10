@@ -3,9 +3,7 @@
   "defaultProvider": "claude-bridge",
   "defaultModel": "claude-fable-5.1",
   "extensions": [],
-  "npmCommand": [
-    "bun"
-  ],
+  "npmCommand": ["bun"],
   "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-web-access",
