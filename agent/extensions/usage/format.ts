@@ -25,3 +25,14 @@ export function clampPercent(value: unknown): number {
   if (!Number.isFinite(n)) return 0;
   return Math.min(100, Math.max(0, n));
 }
+
+/** Format an ISO reset timestamp: local clock time within 24h, otherwise the date. */
+export function formatResetTime(iso: string | null | undefined): string {
+  if (typeof iso !== "string" || !iso) return "";
+  const time = Date.parse(iso);
+  if (!Number.isFinite(time)) return "";
+  if (time - Date.now() < 24 * 3600 * 1000) {
+    return new Date(time).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+  return new Date(time).toLocaleDateString([], { month: "short", day: "numeric" });
+}

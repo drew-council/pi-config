@@ -4,8 +4,10 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { BorderedLoader, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { type ClaudeUsageData, parseClaudeUsage, readClaudeCredentials } from "./claude.js";
 import { type CodexUsageData, parseCodexUsage } from "./codex.js";
-import { clampPercent, formatMoney, humanizeSeconds } from "./format.js";
+import { clampPercent, formatMoney, formatResetTime, humanizeSeconds } from "./format.js";
+import { type CopilotUsageData, parseCopilotUsage } from "./github-copilot.js";
 import { applyOpenRouterCredits, type OpenRouterUsageData, parseOpenRouterKeyUsage } from "./openrouter.js";
 
 const AGENT_DIR = getAgentDir();
@@ -15,6 +17,8 @@ const AUTH_PROFILES_DIR = join(AGENT_DIR, "auth-profiles");
 const SECRETS_FILE = join(homedir(), ".pi", "secrets", "personal.json");
 
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
+const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
+const COPILOT_USER_URL = "https://api.github.com/copilot_internal/user";
 const OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/auth/key";
 const OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits";
 
@@ -24,6 +28,8 @@ type ProviderResult<T> = { status: "ok"; data: T } | { status: "error"; message:
 
 interface Snapshot {
   codex: ProviderResult<CodexUsageData> | null;
+  claude: ProviderResult<ClaudeUsageData> | null;
+  copilot: ProviderResult<CopilotUsageData> | null;
   openrouter: ProviderResult<OpenRouterUsageData> | null;
   fetchedAt: number;
 }
@@ -144,9 +150,92 @@ async function fetchOpenRouter(signal: AbortSignal | undefined): Promise<Provide
   }
 }
 
+interface CopilotCredentials {
+  /** GitHub OAuth token; authorizes copilot_internal/user. */
+  refreshToken: string;
+  /** Where the credential was resolved from, for error messages. */
+  source: string;
+}
+
+function copilotCredentialFrom(auth: unknown, source: string): CopilotCredentials | null {
+  const providers = auth as Record<string, Record<string, unknown>> | null;
+  const copilot = providers?.["github-copilot"];
+  if (!copilot || copilot.type !== "oauth" || typeof copilot.refresh !== "string" || !copilot.refresh) {
+    return null;
+  }
+  return { refreshToken: copilot.refresh, source };
+}
+
+async function readCopilotCredentials(): Promise<CopilotCredentials | null> {
+  const config = (await readJson(AUTH_PROFILES_CONFIG)) as { activeProfile?: unknown } | null;
+  const profile = typeof config?.activeProfile === "string" ? config.activeProfile : null;
+  if (profile) {
+    const profileAuth = await readJson(join(AUTH_PROFILES_DIR, `${profile}.json`));
+    const credentials = copilotCredentialFrom(profileAuth, `auth profile "${profile}"`);
+    if (credentials) return credentials;
+  }
+  return copilotCredentialFrom(await readJson(AUTH_FILE), "default auth store");
+}
+
+async function fetchCopilot(signal: AbortSignal | undefined): Promise<ProviderResult<CopilotUsageData>> {
+  const credentials = await readCopilotCredentials();
+  if (!credentials) {
+    return { status: "error", message: "not logged in (run /login for GitHub Copilot)" };
+  }
+  // Match the Copilot client headers pi itself sends; GitHub rejects some
+  // requests without them.
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${credentials.refreshToken}`,
+    Accept: "application/json",
+    "User-Agent": "GitHubCopilotChat/0.35.0",
+    "Editor-Version": "vscode/1.107.0",
+    "Editor-Plugin-Version": "copilot-chat/0.35.0",
+    "Copilot-Integration-Id": "vscode-chat",
+  };
+  try {
+    const payload = await fetchJson(COPILOT_USER_URL, headers, signal);
+    const data = parseCopilotUsage(payload);
+    if (!data) return { status: "error", message: "unexpected response payload" };
+    return { status: "ok", data };
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return { status: "error", message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** Fetch Claude Code (Pro/Max) usage via the Claude Code OAuth credentials. */
+async function fetchClaude(signal: AbortSignal | undefined): Promise<ProviderResult<ClaudeUsageData>> {
+  try {
+    const credentials = await readClaudeCredentials();
+    if (!credentials) {
+      return {
+        status: "error",
+        message: "no Claude Code login found (keychain or ~/.claude/.credentials.json)",
+      };
+    }
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${credentials.accessToken}`,
+      Accept: "application/json",
+      "anthropic-beta": "oauth-2025-04-20",
+    };
+    const payload = await fetchJson(CLAUDE_USAGE_URL, headers, signal);
+    const data = parseClaudeUsage(payload, credentials.subscription);
+    if (!data) return { status: "error", message: "unexpected response payload" };
+    return { status: "ok", data };
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return { status: "error", message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 async function loadSnapshot(signal: AbortSignal | undefined): Promise<Snapshot> {
-  const [codex, openrouter] = await Promise.all([fetchCodex(signal), fetchOpenRouter(signal)]);
-  return { codex, openrouter, fetchedAt: Date.now() };
+  const [codex, claude, copilot, openrouter] = await Promise.all([
+    fetchCodex(signal),
+    fetchClaude(signal),
+    fetchCopilot(signal),
+    fetchOpenRouter(signal),
+  ]);
+  return { codex, claude, copilot, openrouter, fetchedAt: Date.now() };
 }
 
 function remainingColor(remainingPercent: number): string {
@@ -213,6 +302,66 @@ function snapshotLines(
     lines.push("");
   }
 
+  const claude = snapshot.claude;
+  if (claude) {
+    lines.push(theme.bold("Claude Code"));
+    if (claude.status === "error") {
+      lines.push(`  ${dim("unavailable:")} ${theme.fg("error", claude.message)}`);
+    } else {
+      const data = claude.data;
+      const plan = data.subscription
+        ? `Claude ${data.subscription.charAt(0).toUpperCase()}${data.subscription.slice(1)}`
+        : "Claude Code";
+      lines.push(`  ${dim(plan)}`);
+      for (const limit of data.limits) {
+        const remaining = 100 - clampPercent(limit.usedPercent);
+        const reset = limit.resetsAt ? dim(`  resets ${formatResetTime(limit.resetsAt)}`) : "";
+        const color = limit.severity !== "normal" ? "error" : remainingColor(remaining);
+        lines.push(
+          `  ${muted(limit.label.padEnd(20))}  ${renderBar(theme, remaining)}  ${theme.fg(color, percentLeftText(remaining))}${reset}`,
+        );
+      }
+      if (data.extraUsageSummary) lines.push(`  ${dim(data.extraUsageSummary)}`);
+    }
+    lines.push("");
+  }
+
+  const copilot = snapshot.copilot;
+  if (copilot) {
+    lines.push(theme.bold("GitHub Copilot"));
+    if (copilot.status === "error") {
+      lines.push(`  ${dim("unavailable:")} ${theme.fg("error", copilot.message)}`);
+    } else {
+      const data = copilot.data;
+      const plan = data.plan ? `Copilot ${data.plan.charAt(0).toUpperCase()}${data.plan.slice(1)}` : "Copilot";
+      const reset = data.resetDate ? dim(`  resets ${data.resetDate}`) : "";
+      lines.push(`  ${dim(plan)}${reset}`);
+      for (const quota of data.quotas) {
+        const label = muted(quota.label.padEnd(20));
+        if (quota.unlimited) {
+          lines.push(`  ${label}  ${dim("unlimited")}`);
+          continue;
+        }
+        const remaining = quota.remainingPercent ?? 100;
+        const overage = quota.overageCount > 0 ? dim(`  +${quota.overageCount.toLocaleString()} overage`) : "";
+        lines.push(
+          `  ${label}  ${renderBar(theme, remaining)}  ${percentColor(theme, remaining, percentLeftText(remaining))}${overage}`,
+        );
+        if (quota.creditsUsed !== null && quota.entitlement !== null) {
+          const used = quota.creditsUsed.toLocaleString();
+          const total = quota.entitlement.toLocaleString();
+          // 1 AI credit = $0.01
+          const spent = formatMoney(quota.creditsUsed / 100);
+          const pool = formatMoney(quota.entitlement / 100);
+          lines.push(`  ${" ".repeat(20)}  ${dim(`${used} of ${total} credits used (${spent} of ${pool})`)}`);
+        } else if (quota.creditsUsed !== null) {
+          lines.push(`  ${" ".repeat(20)}  ${dim(`${quota.creditsUsed.toLocaleString()} credits used`)}`);
+        }
+      }
+    }
+    lines.push("");
+  }
+
   const openrouter = snapshot.openrouter;
   if (openrouter) {
     lines.push(theme.bold("OpenRouter"));
@@ -239,7 +388,7 @@ function snapshotLines(
     }
   }
 
-  if (!codex && !openrouter) {
+  if (!codex && !claude && !copilot && !openrouter) {
     lines.push(dim("No provider credentials found."));
   }
   return lines;
@@ -255,7 +404,7 @@ function plainSnapshotText(snapshot: Snapshot): string {
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("usage", {
-    description: "Show Codex rate-limit windows and OpenRouter credit usage",
+    description: "Show Codex, Claude Code, GitHub Copilot, and OpenRouter usage",
     handler: async (_args, ctx) => {
       let snapshot: Snapshot | null = null;
 
