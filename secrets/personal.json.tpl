@@ -1,6 +1,6 @@
 {
   "openai": {
-    "apiKey": "{{ op://Private/openai-personal/credential }}"
+    "apiKey": "{{ op://opnix/openai-personal/credential }}"
   },
   "openrouter": {
     "apiKey": "{{ op://Private/OpenRouter API Key - pi-agent/credential }}"
