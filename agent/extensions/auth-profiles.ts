@@ -13,6 +13,7 @@ import {
   ACCOUNTS,
   type Account,
   bindRuntimeProfile,
+  bindStartupProfile,
   chooseProfileModel,
   claudeStatus,
   copilotFromGh,
@@ -168,6 +169,36 @@ export async function ensureProfileModel(
   throw new Error(`No usable ${profile} model. Run /log-me-in. The previous provider is blocked.`);
 }
 
+const startupBindingMarker = Symbol.for("pi.auth-profile.startup-binding");
+type RefreshOptions = { providers?: string[]; allowNetwork?: boolean; signal?: AbortSignal };
+type RefreshTarget = {
+  refresh?: (this: ModelRuntime, options?: RefreshOptions) => Promise<unknown>;
+  [startupBindingMarker]?: boolean;
+};
+
+/**
+ * Pi computes the startup model list — and the "No models available" warning —
+ * from auth.json before any session_start handler runs: extension loading is
+ * followed by one awaited registry refresh, then findInitialModel. Wrapping
+ * refresh rebinds the active profile's credential store in time for that
+ * startup refresh, so models are available immediately. Reload-safe; the
+ * bindStartupProfile guard keeps explicit profile binds authoritative.
+ */
+export function installStartupProfileBinding(agentDir: string, target: RefreshTarget = ModelRuntime.prototype): void {
+  if (target[startupBindingMarker]) return;
+  const refresh = target.refresh;
+  if (typeof refresh !== "function") throw new Error("Pi's ModelRuntime.refresh API changed; update auth-profiles.");
+  target.refresh = function (this: ModelRuntime, options?: RefreshOptions) {
+    try {
+      bindStartupProfile(this, agentDir);
+    } catch {
+      // A missing or unreadable profile file must never break pi's own refresh.
+    }
+    return refresh.call(this, options);
+  };
+  target[startupBindingMarker] = true;
+}
+
 export default function authProfiles(pi: ExtensionAPI) {
   const agentDir = getAgentDir();
   let activeProfile = readActiveProfile(agentDir);
@@ -177,6 +208,7 @@ export default function authProfiles(pi: ExtensionAPI) {
   // Installed during discovery, before the first interactive picker/request.
   installProfilePolicy(ModelRuntime.prototype, () => activeProfile);
   installScopedModelPolicy(AgentSession.prototype);
+  installStartupProfileBinding(agentDir);
 
   const setStatus = (ctx: ExtensionContext) =>
     ctx.ui.setStatus("auth-profile", ctx.ui.theme.fg("accent", `profile: ${activeProfile}`));
@@ -426,4 +458,4 @@ export default function authProfiles(pi: ExtensionAPI) {
   });
 }
 
-export const _test = { refreshRegistryInBackground };
+export const _test = { installStartupProfileBinding, refreshRegistryInBackground };

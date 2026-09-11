@@ -1,7 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { _test, ensureProfileModel, promptWithSignal } from "../../extensions/auth-profiles";
+import { profileAuthPath } from "../../extensions/shared/accounts.js";
 
 const codex = { provider: "openai-codex", id: "personal-model" } as Model<Api>;
 const copilot = { provider: "github-copilot", id: "work-model" } as Model<Api>;
@@ -119,5 +123,85 @@ describe("auth profile refresh", () => {
 
     expect(_test.refreshRegistryInBackground(registry, [], async () => {}, 1)).toBeUndefined();
     expect(await aborted).toBeTrue();
+  });
+});
+
+describe("startup profile binding", () => {
+  const directories: string[] = [];
+  const savedProfileEnv = process.env.PI_AUTH_PROFILE;
+  afterEach(() => {
+    if (savedProfileEnv === undefined) delete process.env.PI_AUTH_PROFILE;
+    else process.env.PI_AUTH_PROFILE = savedProfileEnv;
+    for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  });
+  function fixture() {
+    const root = mkdtempSync(join(tmpdir(), "pi-startup-binding-"));
+    directories.push(root);
+    const agent = join(root, "agent");
+    mkdirSync(agent);
+    return agent;
+  }
+
+  test("swaps the default auth store for the profile store before the first refresh", async () => {
+    const agent = fixture();
+    delete process.env.PI_AUTH_PROFILE; // read the saved default from auth-profiles.json
+    writeFileSync(join(agent, "auth-profiles.json"), JSON.stringify({ activeProfile: "work" }));
+    class FakeRuntime {
+      refreshCount = 0;
+      credentials = {
+        store: {
+          authPath: join(agent, "auth.json"),
+          read: async () => undefined,
+          modify: async () => undefined,
+          delete: async () => undefined,
+          list: async () => [],
+          constructor: { create: (path: string) => ({ authPath: path }) },
+        },
+        overrides: new Map<string, string>(),
+      };
+      async refresh(options?: { allowNetwork?: boolean }) {
+        this.refreshCount++;
+        return { options, aborted: false, errors: new Map() };
+      }
+    }
+    const prototype = FakeRuntime.prototype as unknown as Parameters<typeof _test.installStartupProfileBinding>[1];
+    _test.installStartupProfileBinding(agent, prototype);
+    const wrapper = prototype.refresh;
+    _test.installStartupProfileBinding(agent, prototype); // reload-safe: no double wrapping
+    expect(prototype.refresh).toBe(wrapper);
+
+    const runtime = new FakeRuntime();
+    await runtime.refresh({ allowNetwork: false });
+    expect(runtime.refreshCount).toBe(1);
+    expect(runtime.credentials.store.authPath).toBe(profileAuthPath(agent, "work"));
+  });
+
+  test("leaves a runtime whose store is already profile-bound alone", async () => {
+    const agent = fixture();
+    const savedProfileEnv = process.env.PI_AUTH_PROFILE;
+    delete process.env.PI_AUTH_PROFILE;
+    const profileStore = {
+      authPath: profileAuthPath(agent, "work"),
+      read: async () => undefined,
+      modify: async () => undefined,
+      delete: async () => undefined,
+      list: async () => [],
+      constructor: { create: (path: string) => ({ authPath: path }) },
+    };
+    class FakeRuntime {
+      credentials = { store: profileStore, overrides: new Map<string, string>() };
+      async refresh() {
+        return { aborted: false, errors: new Map() };
+      }
+    }
+    _test.installStartupProfileBinding(
+      agent,
+      FakeRuntime.prototype as unknown as Parameters<typeof _test.installStartupProfileBinding>[1],
+    );
+    const runtime = new FakeRuntime();
+    await runtime.refresh();
+    if (savedProfileEnv === undefined) delete process.env.PI_AUTH_PROFILE;
+    else process.env.PI_AUTH_PROFILE = savedProfileEnv;
+    expect(runtime.credentials.store).toBe(profileStore);
   });
 });

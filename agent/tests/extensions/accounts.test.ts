@@ -14,6 +14,7 @@ import {
 import { installModelBlacklist } from "../../extensions/model-blacklist/filter.js";
 import {
   bindRuntimeProfile,
+  bindStartupProfile,
   chooseProfileModel,
   claudeStatus,
   copilotFromGh,
@@ -134,6 +135,45 @@ describe("account initialization", () => {
     } catch (error) {
       expect(String(error)).not.toContain("SECRET_MUST_NOT_LEAK");
     }
+  });
+});
+
+describe("startup profile binding", () => {
+  test("rebinds the untouched default store to the saved profile, then stays hands-off", async () => {
+    const { agent } = fixture();
+    json(join(agent, "auth.json"), { "openai-codex": oauth });
+    ensureProfileFiles(agent); // migrates codex into the personal profile
+    json(join(agent, "auth-profiles.json"), { activeProfile: "personal" });
+    const runtime = await ModelRuntime.create({
+      authPath: join(agent, "auth.json"),
+      modelsPath: null,
+      modelsStorePath: join(agent, "models-store.json"),
+      refreshOnCreate: false,
+    });
+    expect(bindStartupProfile(runtime, agent)).toBe(true);
+    await runtime.refresh({ allowNetwork: false });
+    expect(runtime.hasConfiguredAuth("openai-codex")).toBe(true);
+    expect(runtime.hasConfiguredAuth("google")).toBe(false);
+    // The store now points at the profile; explicit binds must never be overridden.
+    expect(bindStartupProfile(runtime, agent)).toBe(false);
+  });
+
+  test("does not rebind a store that already points at a profile", () => {
+    const { agent } = fixture();
+    const runtime = {
+      credentials: {
+        store: {
+          authPath: join(agent, "auth-profiles", "work.json"),
+          read: async () => undefined,
+          modify: async () => undefined,
+          delete: async () => undefined,
+          list: async () => [],
+          constructor: { create: (path: string) => ({ authPath: path }) },
+        },
+        overrides: new Map(),
+      },
+    } as unknown as Parameters<typeof bindStartupProfile>[0];
+    expect(bindStartupProfile(runtime, agent)).toBe(false);
   });
 });
 

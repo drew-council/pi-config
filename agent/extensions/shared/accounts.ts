@@ -153,6 +153,7 @@ export async function saveCopilot(
 }
 
 type FileStore = {
+  readonly authPath?: string;
   read(provider: string): Promise<Credential | undefined>;
   modify(
     provider: string,
@@ -169,6 +170,23 @@ export function runtimeStore(runtime: ModelRuntime): FileStore {
   }
   return store;
 }
+const DEFAULT_AUTH_FILE = "auth.json";
+
+/**
+ * Binds the active profile's credential store, but only when the runtime still
+ * points at the untouched default auth.json. Runs during extension loading so
+ * pi's post-extension-load availability refresh (which computes the startup
+ * model list before any session_start handler) sees profile credentials;
+ * explicit binds from session_start, /profile and /log-me-in always win.
+ */
+export function bindStartupProfile(runtime: ModelRuntime, agentDir: string): boolean {
+  const store = runtimeStore(runtime);
+  if (store.authPath !== join(agentDir, DEFAULT_AUTH_FILE)) return false;
+  ensureProfileFiles(agentDir);
+  bindRuntimeProfile(runtime, agentDir, readActiveProfile(agentDir));
+  return true;
+}
+
 export function bindRuntimeProfile(runtime: ModelRuntime, agentDir: string, profile: ProfileName): void {
   const store = runtimeStore(runtime);
   const credentials = (runtime as unknown as RuntimeInternals).credentials;
