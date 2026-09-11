@@ -1,6 +1,6 @@
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Api, Credential, Model, OAuthCredential, Provider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ModelRuntime } from "@earendil-works/pi-coding-agent";
 
@@ -34,9 +34,38 @@ export function readJson(path: string): Record<string, unknown> {
 }
 
 // Match whole directory components, including the root itself, not ~/workshop.
+// Linked worktrees (e.g. ~/.herdr/worktrees/<repo>/<branch>) have a .git file
+// instead of a directory, so they resolve to the profile of their main
+// repository's directory rather than falling back to the saved default.
 export function profileForDirectory(cwd: string, home = homedir()): ProfileName | undefined {
   const root = relative(home, cwd).split(sep)[0];
-  return isProfileName(root) ? root : undefined;
+  if (isProfileName(root)) return root;
+  const main = mainRepositoryRoot(cwd);
+  return main ? profileForDirectory(main, home) : undefined;
+}
+
+function mainRepositoryRoot(cwd: string): string | undefined {
+  let directory = resolve(cwd);
+  for (;;) {
+    const gitPath = join(directory, ".git");
+    try {
+      if (statSync(gitPath).isFile()) {
+        const gitdir = /^gitdir:\s*(\S.*\S|\S)\s*$/m.exec(readFileSync(gitPath, "utf8"))?.[1];
+        if (!gitdir) return undefined;
+        const absolute = isAbsolute(gitdir) ? gitdir : resolve(directory, gitdir);
+        // Worktrees (<main>/.git/worktrees/<name>) and submodules
+        // (<main>/.git/modules/<path>) both resolve to the root before .git.
+        const segments = absolute.split(sep);
+        const dotGit = segments.lastIndexOf(".git");
+        return dotGit > 0 ? segments.slice(0, dotGit).join(sep) : undefined;
+      }
+    } catch {
+      // No .git here; keep walking up.
+    }
+    const parent = dirname(directory);
+    if (parent === directory) return undefined;
+    directory = parent;
+  }
 }
 
 export function readActiveProfile(agentDir: string): ProfileName {

@@ -83,6 +83,45 @@ describe("directory-based startup profiles", () => {
       expect(profileForDirectory(cwd, home)).toBeUndefined();
     }
   });
+
+  test("inherits the profile of a linked worktree's main repository", () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-profile-worktree-"));
+    directories.push(home);
+    const repo = join(home, "work", "sheer");
+    mkdirSync(join(repo, ".git", "worktrees", "branch"), { recursive: true });
+    const worktree = join(home, ".herdr", "worktrees", "sheer", "branch");
+    mkdirSync(worktree, { recursive: true });
+    writeFileSync(join(worktree, ".git"), `gitdir: ${join(repo, ".git", "worktrees", "branch")}\n`);
+    expect(profileForDirectory(join(worktree, "src"), home)).toBe("work");
+  });
+
+  test("resolves relative gitdirs, submodule layouts, and ignores plain repositories", () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-profile-worktree-"));
+    directories.push(home);
+    const repo = join(home, "personal", "project");
+    mkdirSync(join(repo, ".git", "worktrees", "branch"), { recursive: true });
+    const worktree = join(home, "wt", "branch");
+    mkdirSync(worktree, { recursive: true });
+    writeFileSync(join(worktree, ".git"), "gitdir: ../../personal/project/.git/worktrees/branch\n");
+    expect(profileForDirectory(worktree, home)).toBe("personal");
+
+    // Submodule checkouts carry their parent repository's profile.
+    const submodule = join(home, "misc", "sub");
+    mkdirSync(submodule, { recursive: true });
+    writeFileSync(join(submodule, ".git"), `gitdir: ${join(repo, ".git", "modules", "sub")}\n`);
+    expect(profileForDirectory(submodule, home)).toBe("personal");
+
+    // A regular checkout outside profile roots adopts nothing.
+    const plain = join(home, "repos", "other");
+    mkdirSync(join(plain, ".git"), { recursive: true });
+    expect(profileForDirectory(plain, home)).toBeUndefined();
+
+    // Broken or malformed gitfiles fall back to the saved default.
+    const broken = join(home, "wt", "broken");
+    mkdirSync(broken, { recursive: true });
+    writeFileSync(join(broken, ".git"), "gitdir: /nonexistent/.git/worktrees/x\n");
+    expect(profileForDirectory(broken, home)).toBeUndefined();
+  });
 });
 
 describe("account initialization", () => {
