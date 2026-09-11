@@ -45,7 +45,7 @@ export function summarizeFetch(payload: FetchResponse): string {
 const REPLY_TEMPLATES = [
   '- Code fix: "Fixed in `<file>:<line>` - <brief description of what changed and why>."',
   "- Question: explain the rationale directly and reference relevant context.",
-  '- Disagreement: explain why the current approach is intentional, ending with "Let me know if you feel strongly."',
+  '- Disagreement: explain why the current approach is intentional.',
   '- Out of scope: "Good point - noted for follow-up."',
   "- Ambiguous: ask for clarification and say what was left unchanged.",
   "- Generated code: identify the source file and say it will be regenerated.",
