@@ -92,6 +92,32 @@ def migrate-agent-packages-to-bun [agent_dir: string] {
   }
 }
 
+# pi-claude-bridge 0.7.0 pins @anthropic-ai/claude-agent-sdk to ^0.2.x, whose
+# bundled Claude Code CLI (2.1.141) rejects models that require a newer CLI
+# (e.g. fable-5.1 needs >= 2.1.251, yielding "API Error: 400 Claude Code
+# 2.1.141 does not support this model"). agent/npm/package.json is gitignored,
+# so enforce a bun override pinning the SDK to the 0.3.x line (bundled CLI
+# tracks the system `claude` version) on every machine, then reconcile the
+# lockfile. Remove this once the bridge itself depends on ^0.3.x.
+def ensure-agent-npm-sdk-override [agent_dir: string] {
+  let agent_npm_dir = ($agent_dir | path join "npm")
+  let package_json_path = ($agent_npm_dir | path join "package.json")
+  let override_spec = "^0.3.268"
+  let override_key = "@anthropic-ai/claude-agent-sdk"
+
+  let pkg = (open $package_json_path)
+  let current = ($pkg | get -o overrides | default {} | get -o $override_key | default "")
+  if $current == $override_spec {
+    return
+  }
+
+  say $"Overriding ($override_key) to ($override_spec) in agent/npm"
+  let overrides = ($pkg | get -o overrides | default {} | upsert $override_key $override_spec)
+  let updated = ($pkg | upsert overrides $overrides)
+  $updated | to json | $"($in)\n" | save --force $package_json_path
+  ^bun install --cwd $agent_npm_dir
+}
+
 def npm-package-name [source: string] {
   let spec = ($source | str replace --regex '^npm:' '')
   let parts = ($spec | split row "@")
@@ -259,6 +285,10 @@ def main [
     say "Updating/installing Pi-managed packages from settings"
     ^pi update --extensions
   }
+
+  # After `pi update --extensions` (which may rewrite agent/npm/package.json)
+  # and before patch-package, so patches evaluate against the final tree.
+  ensure-agent-npm-sdk-override $agent_dir
 
   apply-agent-npm-patches $bun_dir $agent_dir
 
