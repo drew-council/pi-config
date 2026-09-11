@@ -1,5 +1,50 @@
 import { describe, expect, test } from "bun:test";
-import { _test, promptWithSignal } from "../../extensions/auth-profiles";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { _test, ensureProfileModel, promptWithSignal } from "../../extensions/auth-profiles";
+
+const codex = { provider: "openai-codex", id: "personal-model" } as Model<Api>;
+const copilot = { provider: "github-copilot", id: "work-model" } as Model<Api>;
+const google = { provider: "google", id: "work-fallback" } as Model<Api>;
+function modelContext(models: Model<Api>[]) {
+  return { model: codex, modelRegistry: { getAvailable: () => models } as ExtensionContext["modelRegistry"] };
+}
+
+test("switching away from Codex selects a work model and handles rejected provider auth", async () => {
+  const ctx = modelContext([codex, copilot, google]);
+  const attempted: string[] = [];
+  await ensureProfileModel(
+    {
+      setModel: async (model) => {
+        attempted.push(model.provider);
+        if (model.provider === "github-copilot") return false;
+        ctx.model = model;
+        return true;
+      },
+    },
+    ctx,
+    "work",
+  );
+  expect(ctx.model).toBe(google);
+  expect(attempted).toEqual(["github-copilot", "google"]);
+});
+
+test("failed model selection cannot be reported as a successful profile switch", async () => {
+  await expect(ensureProfileModel({ setModel: async () => false }, modelContext([copilot]), "work")).rejects.toThrow(
+    "No usable work model",
+  );
+  await expect(
+    ensureProfileModel(
+      {
+        setModel: async () => {
+          throw new Error("must not select Codex");
+        },
+      },
+      modelContext([codex]),
+      "work",
+    ),
+  ).rejects.toThrow("No usable work model");
+});
 
 describe("OAuth interaction", () => {
   test("browser callback aborts a pending manual-code prompt without waiting for terminal input", async () => {

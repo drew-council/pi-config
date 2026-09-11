@@ -59,6 +59,7 @@ function refreshRegistryInBackground(
   void Promise.resolve()
     .then(cleanup)
     .then(() => registry.refresh({ allowNetwork: false, providers, signal: controller.signal }))
+    .catch(() => {})
     .then(after)
     .catch(() => {})
     .finally(() => clearTimeout(timeout));
@@ -150,6 +151,23 @@ async function oauthLogin(
   });
 }
 
+export async function ensureProfileModel(
+  pi: Pick<ExtensionAPI, "setModel">,
+  ctx: Pick<ExtensionContext, "model" | "modelRegistry">,
+  profile: ProfileName,
+  remembered?: Model<Api>,
+): Promise<void> {
+  if (ctx.model && providerAllowed(profile, ctx.model.provider)) return;
+  let candidates = ctx.modelRegistry.getAvailable().filter((model) => providerAllowed(profile, model.provider));
+  while (candidates.length) {
+    const next = chooseProfileModel(candidates, profile, remembered);
+    if (!next) break;
+    if (await pi.setModel(next)) return;
+    candidates = candidates.filter((model) => model.provider !== next.provider);
+  }
+  throw new Error(`No usable ${profile} model. Run /log-me-in. The previous provider is blocked.`);
+}
+
 export default function authProfiles(pi: ExtensionAPI) {
   const agentDir = getAgentDir();
   let activeProfile = readActiveProfile(agentDir);
@@ -162,27 +180,42 @@ export default function authProfiles(pi: ExtensionAPI) {
 
   const setStatus = (ctx: ExtensionContext) =>
     ctx.ui.setStatus("auth-profile", ctx.ui.theme.fg("accent", `profile: ${activeProfile}`));
-  const ensureModel = async (ctx: ExtensionContext) => {
-    if (ctx.model && providerAllowed(activeProfile, ctx.model.provider)) return;
-    const next = chooseProfileModel(ctx.modelRegistry.getAvailable(), activeProfile, remembered.get(activeProfile));
-    if (next) await pi.setModel(next);
-    else
-      ctx.ui.notify(
-        `No available ${activeProfile} model. Run /log-me-in. The previous provider is blocked.`,
-        "warning",
-      );
-  };
+  const ensureModel = (ctx: ExtensionContext) =>
+    ensureProfileModel(pi, ctx, activeProfile, remembered.get(activeProfile));
   const switchProfile = async (ctx: ExtensionContext, profile: ProfileName) => {
     if (ctx.model && providerAllowed(activeProfile, ctx.model.provider)) remembered.set(activeProfile, ctx.model);
+    const previousProfile = activeProfile;
     bindRuntimeProfile(getRuntime(ctx.modelRegistry), agentDir, profile);
     activeProfile = profile;
+    try {
+      await closeProviderSessions();
+      await ctx.modelRegistry.refresh({
+        providers: providersFor(profile),
+        allowNetwork: false,
+        signal: AbortSignal.timeout(5_000),
+      });
+      await ensureModel(ctx);
+    } catch {
+      activeProfile = previousProfile;
+      bindRuntimeProfile(getRuntime(ctx.modelRegistry), agentDir, previousProfile);
+      await ctx.modelRegistry
+        .refresh({
+          providers: providersFor(previousProfile),
+          allowNetwork: false,
+          signal: AbortSignal.timeout(5_000),
+        })
+        .catch(() => {});
+      ctx.ui.notify(
+        `Could not select a usable ${profile} model; staying on ${previousProfile}. Run /log-me-in.`,
+        "error",
+      );
+      return false;
+    }
     process.env.PI_AUTH_PROFILE = profile; // spawned Pi/subagents inherit this session's profile
     writeActiveProfile(agentDir, profile);
     setStatus(ctx);
-    await closeProviderSessions();
-    await ctx.modelRegistry.refresh({ allowNetwork: false, signal: AbortSignal.timeout(2_000) }).catch(() => {});
-    await ensureModel(ctx);
     pi.events.emit("auth-profile:changed", { profile });
+    return true;
   };
 
   pi.on("session_start", (event, ctx) => {
@@ -197,9 +230,11 @@ export default function authProfiles(pi: ExtensionAPI) {
       ctx.modelRegistry,
       providersFor(activeProfile),
       closeProviderSessions,
-      1_000,
+      5_000,
       async () => {
-        if (!shutdown.signal.aborted) await ensureModel(ctx);
+        if (!shutdown.signal.aborted && !busy) {
+          await ensureModel(ctx).catch((error: Error) => ctx.ui.notify(error.message, "error"));
+        }
       },
     );
   });
@@ -374,7 +409,7 @@ export default function authProfiles(pi: ExtensionAPI) {
               ))
             )
               continue;
-            await switchProfile(ctx, account.profile);
+            if (!(await switchProfile(ctx, account.profile))) return;
           }
           await loginAccount(account, ctx);
           await ensureModel(ctx);

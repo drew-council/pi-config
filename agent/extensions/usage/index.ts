@@ -2,18 +2,18 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { BorderedLoader, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { BorderedLoader, DynamicBorder, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { Box, Container, Key, matchesKey, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { PROFILE_NAMES, type ProfileName, profileAuthPath, providerAllowed } from "../shared/accounts.js";
 import { type ClaudeUsageData, parseClaudeUsage, readClaudeCredentials } from "./claude.js";
 import { type CodexUsageData, parseCodexUsage } from "./codex.js";
 import { clampPercent, formatMoney, formatResetTime, humanizeSeconds } from "./format.js";
 import { type CopilotUsageData, parseCopilotUsage } from "./github-copilot.js";
 import { applyOpenRouterCredits, type OpenRouterUsageData, parseOpenRouterKeyUsage } from "./openrouter.js";
+import { usageColumns } from "./view.js";
 
 const AGENT_DIR = getAgentDir();
-const AUTH_FILE = join(AGENT_DIR, "auth.json");
-const AUTH_PROFILES_CONFIG = join(AGENT_DIR, "auth-profiles.json");
-const AUTH_PROFILES_DIR = join(AGENT_DIR, "auth-profiles");
+
 const SECRETS_FILE = join(homedir(), ".pi", "secrets", "personal.json");
 
 const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
@@ -26,7 +26,7 @@ const BAR_WIDTH = 24;
 
 type ProviderResult<T> = { status: "ok"; data: T } | { status: "error"; message: string };
 
-interface Snapshot {
+export interface Snapshot {
   codex: ProviderResult<CodexUsageData> | null;
   claude: ProviderResult<ClaudeUsageData> | null;
   copilot: ProviderResult<CopilotUsageData> | null;
@@ -62,29 +62,21 @@ function codexCredentialsFrom(auth: unknown, source: string): CodexCredentials |
   };
 }
 
-/**
- * Resolve the Codex credential downstream of the active auth profile, mirroring
- * the auth-profiles extension: auth-profiles.json names the active profile and
- * auth-profiles/<profile>.json holds its credentials. Falls back to the default
- * auth.json store when no profile is configured.
- */
-async function readCodexCredentials(): Promise<CodexCredentials | null> {
-  const config = (await readJson(AUTH_PROFILES_CONFIG)) as { activeProfile?: unknown } | null;
-  const profile = typeof config?.activeProfile === "string" ? config.activeProfile : null;
-  if (profile) {
-    const profileAuth = await readJson(join(AUTH_PROFILES_DIR, `${profile}.json`));
-    const credentials = codexCredentialsFrom(profileAuth, `auth profile "${profile}"`);
-    if (credentials) return credentials;
-  }
-  return codexCredentialsFrom(await readJson(AUTH_FILE), "default auth store");
+// Usage reads each provider's owning profile, never the active/global store.
+async function readCodexCredentials(agentDir = AGENT_DIR): Promise<CodexCredentials | null> {
+  return codexCredentialsFrom(await readJson(profileAuthPath(agentDir, "personal")), 'auth profile "personal"');
 }
 
 async function readOpenRouterApiKey(): Promise<string | null> {
+  const auth = (await readJson(profileAuthPath(AGENT_DIR, "personal"))) as {
+    openrouter?: { type?: string; key?: unknown };
+  } | null;
+  if (auth?.openrouter?.type === "api_key" && typeof auth.openrouter.key === "string" && auth.openrouter.key.trim())
+    return auth.openrouter.key.trim();
   const secrets = (await readJson(SECRETS_FILE)) as { openrouter?: { apiKey?: unknown } } | null;
   const key = secrets?.openrouter?.apiKey;
   if (typeof key === "string" && key.trim()) return key.trim();
-  const fromEnv = process.env.OPENROUTER_API_KEY;
-  return fromEnv?.trim() ? fromEnv.trim() : null;
+  return null;
 }
 
 async function fetchJson(
@@ -166,15 +158,8 @@ function copilotCredentialFrom(auth: unknown, source: string): CopilotCredential
   return { refreshToken: copilot.refresh, source };
 }
 
-async function readCopilotCredentials(): Promise<CopilotCredentials | null> {
-  const config = (await readJson(AUTH_PROFILES_CONFIG)) as { activeProfile?: unknown } | null;
-  const profile = typeof config?.activeProfile === "string" ? config.activeProfile : null;
-  if (profile) {
-    const profileAuth = await readJson(join(AUTH_PROFILES_DIR, `${profile}.json`));
-    const credentials = copilotCredentialFrom(profileAuth, `auth profile "${profile}"`);
-    if (credentials) return credentials;
-  }
-  return copilotCredentialFrom(await readJson(AUTH_FILE), "default auth store");
+async function readCopilotCredentials(agentDir = AGENT_DIR): Promise<CopilotCredentials | null> {
+  return copilotCredentialFrom(await readJson(profileAuthPath(agentDir, "work")), 'auth profile "work"');
 }
 
 async function fetchCopilot(signal: AbortSignal | undefined): Promise<ProviderResult<CopilotUsageData>> {
@@ -394,17 +379,51 @@ function snapshotLines(
   return lines;
 }
 
+export function profileSnapshotLines(
+  snapshot: Snapshot,
+  theme: Parameters<typeof snapshotLines>[1],
+  profile: ProfileName,
+): string[] {
+  const scoped = {
+    ...snapshot,
+    codex: providerAllowed(profile, "openai-codex") ? snapshot.codex : null,
+    claude: providerAllowed(profile, "claude-bridge") ? snapshot.claude : null,
+    copilot: providerAllowed(profile, "github-copilot") ? snapshot.copilot : null,
+    openrouter: providerAllowed(profile, "openrouter") ? snapshot.openrouter : null,
+  };
+  const lines = [theme.bold(profile === "work" ? "Work" : "Personal"), "", ...snapshotLines(scoped, theme)];
+  if (providerAllowed(profile, "google"))
+    lines.push("", theme.bold("Google Gemini"), theme.fg("dim", "  Usage reporting not supported."));
+  return lines;
+}
+
+export function profileColumns(
+  snapshot: Snapshot,
+  theme: Parameters<typeof snapshotLines>[1],
+  width: number,
+): string[] {
+  return usageColumns(snapshot, theme).render(width);
+}
+
 function plainSnapshotText(snapshot: Snapshot): string {
-  const lines = snapshotLines(snapshot, {
-    fg: (_color, text) => text,
-    bold: (text) => text,
-  });
+  const lines = PROFILE_NAMES.flatMap((profile) =>
+    profileSnapshotLines(
+      snapshot,
+      {
+        fg: (_color, text) => text,
+        bold: (text) => text,
+      },
+      profile,
+    ),
+  );
   return lines.join("\n").replace(/█|░/g, (c) => (c === "█" ? "#" : "-"));
 }
 
+export const _test = { readCodexCredentials, readCopilotCredentials };
+
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("usage", {
-    description: "Show Codex, Claude Code, GitHub Copilot, and OpenRouter usage",
+    description: "Show usage in Work and Personal profile columns",
     handler: async (_args, ctx) => {
       let snapshot: Snapshot | null = null;
 
@@ -444,34 +463,32 @@ export default function (pi: ExtensionAPI) {
           _tui.requestRender();
         };
 
-        const refreshPromise = refresh();
-        void refreshPromise;
-
         return {
           render(width: number): string[] {
             if (cached && cached.width === width) return cached.lines;
             const current = snapshot;
             if (!current) return [truncateToWidth("Usage unavailable", width)];
 
-            const title = theme.bold("Provider usage");
-            const stamp = theme.fg("dim", new Date(current.fetchedAt).toLocaleTimeString());
-            const spinner = refreshing ? theme.fg("accent", "  refreshing…") : "";
-            const content = [
-              ` ${title}  ${stamp}${spinner}`,
-              ...snapshotLines(current, theme),
-              ` ${theme.fg("dim", "r refresh · esc close")}`,
-            ];
-
-            const inner = Math.min(width - 4, Math.max(...content.map((line) => visibleWidth(line)), 40));
-            const boxLines = [
-              `╭─${"─".repeat(inner + 2)}─╮`,
-              ...content.map((line) => {
-                const padded = line + " ".repeat(Math.max(0, inner + 2 - visibleWidth(line)));
-                return `│ ${padded} │`;
-              }),
-              `╰─${"─".repeat(inner + 2)}─╯`,
-            ];
-            cached = { width, lines: boxLines.map((line) => truncateToWidth(line, width)) };
+            const panel = new Container();
+            panel.addChild(new DynamicBorder((s: string) => theme.fg("borderMuted", s)));
+            const body = new Box(2, 1);
+            const stamp = new Date(current.fetchedAt).toLocaleTimeString();
+            body.addChild(
+              new Text(
+                theme.bold("Provider usage") +
+                  theme.fg("dim", `  Updated ${stamp}`) +
+                  (refreshing ? theme.fg("accent", "  Refreshing…") : ""),
+                0,
+                0,
+              ),
+            );
+            body.addChild(new Spacer(1));
+            body.addChild(usageColumns(current, theme));
+            body.addChild(new Spacer(1));
+            body.addChild(new Text(theme.fg("dim", "r  Refresh   esc  Close"), 0, 0));
+            panel.addChild(body);
+            panel.addChild(new DynamicBorder((s: string) => theme.fg("borderMuted", s)));
+            cached = { width, lines: panel.render(width) };
             return cached.lines;
           },
           invalidate() {
