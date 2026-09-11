@@ -1,5 +1,35 @@
 import { describe, expect, test } from "bun:test";
-import { _test } from "../../extensions/auth-profiles";
+import { _test, promptWithSignal } from "../../extensions/auth-profiles";
+
+describe("OAuth interaction", () => {
+  test("browser callback aborts a pending manual-code prompt without waiting for terminal input", async () => {
+    const controller = new AbortController();
+    const dialog = { showManualInput: () => new Promise<string>(() => {}), showPrompt: async () => "typed" };
+    const pending = promptWithSignal(dialog, {
+      type: "manual_code",
+      message: "Paste callback URL",
+      signal: controller.signal,
+    });
+    controller.abort();
+    await expect(pending).rejects.toThrow("Login cancelled");
+    expect(await promptWithSignal(dialog, { type: "text", message: "Next step" })).toBe("typed");
+  });
+
+  test("an already-cancelled prompt never opens an input dialog", async () => {
+    let opened = false;
+    const show = async () => {
+      opened = true;
+      return "";
+    };
+    await expect(
+      promptWithSignal(
+        { showManualInput: show, showPrompt: show },
+        { type: "text", message: "prompt", signal: AbortSignal.abort() },
+      ),
+    ).rejects.toThrow();
+    expect(opened).toBeFalse();
+  });
+});
 
 describe("auth profile refresh", () => {
   test("runs provider-scoped offline refresh without returning work to startup", async () => {

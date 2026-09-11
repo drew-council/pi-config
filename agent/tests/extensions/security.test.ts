@@ -1,12 +1,11 @@
-import { mock, test } from "bun:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
 
-const TEST_AGENT_DIR = "/home/test/.pi/agent";
-mock.module("@earendil-works/pi-coding-agent", () => ({
-  getAgentDir: () => TEST_AGENT_DIR,
-}));
+// This hook only classifies paths; it never reads/writes the real agent directory.
+// Avoid replacing the entire SDK module for every other test in Bun's process.
+const TEST_AGENT_DIR = getAgentDir();
 const { default: securityExtension } = await import("../../extensions/security.js");
 
 type ToolCallResult = { block: true; reason: string } | undefined;

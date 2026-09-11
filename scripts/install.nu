@@ -7,8 +7,8 @@
 # - applies patch-package patches from ./patches via Bun's postinstall
 # - applies patch-package patches from ./agent/patches to Pi-managed npm packages
 # - updates/installs Pi-managed npm packages with Bun from agent/settings.json
-# - creates isolated work/personal Pi login profiles (existing logins become personal)
-# - generates the local personal secret file from its committed 1Password template
+# - initializes isolated work/personal accounts, reusing gh and existing Codex logins
+# - generates local personal/Sheer Health secret files from committed 1Password templates
 # - verifies that Neovim is available for the embedded prompt editor
 # - verifies that Pi can resolve the configured packages
 #
@@ -55,44 +55,6 @@ def secret-keys-match [template_file: string secret_file: string] {
   )
 
   $existing_keys == $expected_keys
-}
-
-def setup-auth-profiles [agent_dir: string] {
-  let auth_file = ($agent_dir | path join "auth.json")
-  let backup_file = ($agent_dir | path join "auth.pre-profiles.json")
-  let profiles_dir = ($agent_dir | path join "auth-profiles")
-  let work_profile = ($profiles_dir | path join "work.json")
-  let personal_profile = ($profiles_dir | path join "personal.json")
-  let profile_config = ($agent_dir | path join "auth-profiles.json")
-
-  say "Configuring independent work/personal Pi login profiles"
-  mkdir $profiles_dir
-
-  if not ($work_profile | path exists) {
-    "{}\n" | save $work_profile
-  }
-
-  if not ($personal_profile | path exists) {
-    if ($auth_file | path exists) {
-      if not ($backup_file | path exists) {
-        cp $auth_file $backup_file
-      }
-      cp $auth_file $personal_profile
-      print $"    Imported existing Pi logins into ($personal_profile)"
-    } else {
-      "{}\n" | save $personal_profile
-    }
-  }
-
-  if not ($profile_config | path exists) {
-    {activeProfile: "work"} | to json --indent 2 | save $profile_config
-  }
-
-  ^chmod 700 $profiles_dir
-  ^chmod 600 $work_profile $personal_profile $profile_config
-  if ($backup_file | path exists) {
-    ^chmod 600 $backup_file
-  }
 }
 
 def apply-agent-npm-patches [bun_dir: string agent_dir: string] {
@@ -186,8 +148,10 @@ def main [
   let agent_dir = ($repo | path join "agent")
   let secrets_dir = ($repo | path join "secrets")
   let personal_secrets = ($secrets_dir | path join "personal.json")
+  let work_secrets = ($secrets_dir | path join "work.json")
   # Account UUIDs reported by `op account list --format=json`.
   let personal_account = "XH4EFF5WXBGXJOIXZG4PLGILIE"
+  let work_account = "QIWPEOJ6R5GXPJFYBZFU5VL6KI" # sheerhealth.1password.com
 
   say $"Pi config repo: ($repo)"
 
@@ -204,6 +168,7 @@ def main [
   }
 
   let personal_template = ($secrets_dir | path join "personal.json.tpl")
+  let work_template = ($secrets_dir | path join "work.json.tpl")
 
   let required_commands = ["bun" "pi" "nvim"]
   for cmd in $required_commands {
@@ -226,11 +191,10 @@ def main [
   }
 
   let inject_personal = ($force_inject or not (secret-keys-match $personal_template $personal_secrets))
-  if $inject_personal and not (command-exists "op") {
-    error make {msg: "Missing required command `op`; the personal secret file needs to be generated."}
+  let inject_work = ($force_inject or not (secret-keys-match $work_template $work_secrets))
+  if ($inject_personal or $inject_work) and not (command-exists "op") {
+    error make {msg: "Missing required command `op`; a secret file needs to be generated."}
   }
-
-  setup-auth-profiles $agent_dir
 
   if $inject_personal {
     say "Generating personal secret file"
@@ -238,6 +202,14 @@ def main [
   } else {
     say "Personal secret file already has the expected keys; skipping 1Password injection"
   }
+
+  if $inject_work {
+    say "Generating Sheer Health work secret file"
+    ^op --account $work_account inject --in-file $work_template --out-file $work_secrets --force
+  } else {
+    say "Work secret file already has the expected keys; skipping 1Password injection"
+  }
+  ^chmod 600 $personal_secrets $work_secrets
 
   say "Installing Bun dependency workspace and applying patches"
   ^bun install --cwd $bun_dir --frozen-lockfile
@@ -289,6 +261,9 @@ def main [
   }
 
   apply-agent-npm-patches $bun_dir $agent_dir
+
+  say "Initializing account profiles (browser logins remain available through /log-me-in)"
+  ^bun --tsconfig-override ($repo | path join "tsconfig.runtime.json") ($agent_dir | path join "scripts" "setup-accounts.ts")
 
   if not $skip_pi_list {
     say "Verifying Pi package resolution"

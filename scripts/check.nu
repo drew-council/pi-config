@@ -45,5 +45,6 @@ def main [] {
   ^$tsgo -p ($repo | path join "tsconfig.json")
 
   say "Running Bun unit tests"
-  ^bun test ./agent/tests
+  # Runtime imports must resolve executable JS, not tsgo's declaration-only paths.
+  ^bun test --tsconfig-override ./tsconfig.runtime.json ./agent/tests
 }

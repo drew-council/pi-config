@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@earendil-works/pi-coding-agent": ["./bun/typecheck/node_modules/@earendil-works/pi-coding-agent/dist/index.js"],
+      "@earendil-works/pi-ai": ["./bun/typecheck/node_modules/@earendil-works/pi-ai/dist/index.js"],
+      "@earendil-works/pi-tui": ["./bun/typecheck/node_modules/@earendil-works/pi-tui/dist/index.js"],
+      "typebox": ["./bun/typecheck/node_modules/typebox/build/index.mjs"]
+    }
+  }
+}

@@ -12,7 +12,8 @@ test("OpenRouter model override preserves the reviewed privacy, region, and pric
   assert.equal(provider.baseUrl, undefined);
   assert.equal(provider.api, undefined);
   assert.equal(provider.models, undefined);
-  assert.equal(provider.apiKey, "!bun ~/.pi/agent/scripts/openrouter-api-key.ts");
+  // Authentication belongs to auth-profiles/personal.json, not a global models.json fallback.
+  assert.equal(provider.apiKey, undefined);
 
   const model = provider.modelOverrides?.["z-ai/glm-5.3-flash"];
   assert.ok(model);

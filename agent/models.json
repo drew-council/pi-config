@@ -1,7 +1,6 @@
 {
   "providers": {
     "openrouter": {
-      "apiKey": "!bun ~/.pi/agent/scripts/openrouter-api-key.ts",
       "modelOverrides": {
         "z-ai/glm-5.3-flash": {
           "cost": {
@@ -42,9 +41,9 @@
         }
       }
     },
-    "google-vertex": {
-      "api": "google-vertex",
-      "baseUrl": "https://{location}-aiplatform.googleapis.com",
+    "google": {
+      "api": "google-generative-ai",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "models": [
         {
           "id": "gemini-3.8-flash",
