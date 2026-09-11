@@ -1,5 +1,6 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { join, relative, sep } from "node:path";
 import type { Api, Credential, Model, OAuthCredential, Provider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ModelRuntime } from "@earendil-works/pi-coding-agent";
 
@@ -30,6 +31,12 @@ export function readJson(path: string): Record<string, unknown> {
   }
   // Never echo JSON parser errors: they can contain credential text.
   throw new Error(`Cannot read JSON object from ${path}`);
+}
+
+// Match whole directory components, including the root itself, not ~/workshop.
+export function profileForDirectory(cwd: string, home = homedir()): ProfileName | undefined {
+  const root = relative(home, cwd).split(sep)[0];
+  return isProfileName(root) ? root : undefined;
 }
 
 export function readActiveProfile(agentDir: string): ProfileName {

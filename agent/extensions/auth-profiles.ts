@@ -22,6 +22,7 @@ import {
   PROFILE_NAMES,
   type ProfileName,
   profileAuthPath,
+  profileForDirectory,
   providerAllowed,
   providersFor,
   readActiveProfile,
@@ -184,7 +185,10 @@ export default function authProfiles(pi: ExtensionAPI) {
     pi.events.emit("auth-profile:changed", { profile });
   };
 
-  pi.on("session_start", (_event, ctx) => {
+  pi.on("session_start", (event, ctx) => {
+    // Only auto-select on process startup. /reload, /new, and session switches
+    // retain a manual selection; directory selection never changes the saved default.
+    if (event.reason === "startup") activeProfile = profileForDirectory(ctx.cwd) ?? activeProfile;
     ensureProfileFiles(agentDir);
     bindRuntimeProfile(getRuntime(ctx.modelRegistry), agentDir, activeProfile);
     process.env.PI_AUTH_PROFILE = activeProfile;

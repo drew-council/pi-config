@@ -21,6 +21,7 @@ import {
   ensureProfileFiles,
   importAccountKey,
   profileAuthPath,
+  profileForDirectory,
   readAccountKey,
   readJson,
   runtimeStore,
@@ -57,6 +58,31 @@ const oauth = {
   accountId: "test",
 };
 const execResult = (stdout: string) => ({ stdout, stderr: "", code: 0, killed: false });
+
+describe("directory-based startup profiles", () => {
+  test("selects the home-level profile for roots and nested projects", () => {
+    const home = join(tmpdir(), "pi-profile-home");
+    expect(profileForDirectory(join(home, "personal"), home)).toBe("personal");
+    expect(profileForDirectory(join(home, "personal", "project", "src"), home)).toBe("personal");
+    expect(profileForDirectory(join(home, "work"), home)).toBe("work");
+    expect(profileForDirectory(join(home, "work", "project", "personal"), home)).toBe("work");
+    expect(profileForDirectory(`${home}/personal/../work/project/`, home)).toBe("work");
+  });
+
+  test("does not switch for sibling prefixes, nested names elsewhere, or other homes", () => {
+    const home = join(tmpdir(), "pi-profile-home");
+    for (const cwd of [
+      home,
+      join(home, "workshop"),
+      join(home, "personal-backup"),
+      join(home, "repos", "work"),
+      join(home, "..", "someone-else", "personal"),
+      `${home}/personal/../../outside`,
+    ]) {
+      expect(profileForDirectory(cwd, home)).toBeUndefined();
+    }
+  });
+});
 
 describe("account initialization", () => {
   test("migrates only designated providers, keeps the original intact and never overwrites a profile", () => {
