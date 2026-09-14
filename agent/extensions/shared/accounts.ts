@@ -104,7 +104,12 @@ export function ensureProfileFiles(agentDir: string): void {
   }
 }
 
-export function readAccountKey(agentDir: string, provider: "google" | "openrouter"): string {
+export type ManagedKeyProvider = "google" | "openrouter";
+/** The API-key account whose secret install.nu injects from 1Password for each profile. */
+export const managedKeyProvider = (profile: ProfileName): ManagedKeyProvider =>
+  profile === "work" ? "google" : "openrouter";
+
+export function readAccountKey(agentDir: string, provider: ManagedKeyProvider): string {
   const profile = provider === "google" ? "work" : "personal";
   const path = join(agentDir, "..", "secrets", `${profile}.json`);
   const data = readJson(path);
@@ -120,7 +125,7 @@ export function readAccountKey(agentDir: string, provider: "google" | "openroute
 export async function importAccountKey(
   runtime: ModelRuntime,
   agentDir: string,
-  provider: "google" | "openrouter",
+  provider: ManagedKeyProvider,
 ): Promise<void> {
   const key = readAccountKey(agentDir, provider);
   await runtime.login(provider, "api_key", {
@@ -128,6 +133,31 @@ export async function importAccountKey(
     prompt: async () => key,
     notify: () => {},
   });
+}
+
+/**
+ * Seeds the profile's managed API key from the local secret file when the
+ * profile's credential store has no login for it yet (a fresh checkout, or a
+ * machine where install.nu has not run since the profile split). The runtime
+ * must already be bound to `profile`. Returns whether a key was imported; a
+ * missing or unexpanded secret file is not an error, the profile simply keeps
+ * whatever logins it already has.
+ */
+export async function importMissingAccountKey(
+  runtime: ModelRuntime,
+  agentDir: string,
+  profile: ProfileName,
+): Promise<boolean> {
+  const provider = managedKeyProvider(profile);
+  const store = runtimeStore(runtime);
+  if (store.authPath !== profileAuthPath(agentDir, profile)) throw new Error(`Runtime is not bound to ${profile}.`);
+  if (await store.read(provider)) return false;
+  try {
+    await importAccountKey(runtime, agentDir, provider);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export type Exec = Pick<ExtensionAPI, "exec">["exec"];

@@ -35,8 +35,10 @@ test("switching away from Codex selects a work model and handles rejected provid
 
 test("failed model selection cannot be reported as a successful profile switch", async () => {
   await expect(ensureProfileModel({ setModel: async () => false }, modelContext([copilot]), "work")).rejects.toThrow(
-    "No usable work model",
+    "No usable work model: Pi rejected the saved login for github-copilot",
   );
+  // A profile without any login names the missing accounts and the credential
+  // file instead of blaming the previous provider; the other account's model is never tried.
   await expect(
     ensureProfileModel(
       {
@@ -47,7 +49,9 @@ test("failed model selection cannot be reported as a successful profile switch",
       modelContext([codex]),
       "work",
     ),
-  ).rejects.toThrow("No usable work model");
+  ).rejects.toThrow(
+    /No work model is available: none of github-copilot, google, claude-bridge has a saved login in .*work\.json/,
+  );
 });
 
 describe("OAuth interaction", () => {

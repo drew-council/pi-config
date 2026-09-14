@@ -21,6 +21,7 @@ import {
   type Exec,
   ensureProfileFiles,
   importAccountKey,
+  importMissingAccountKey,
   profileAuthPath,
   profileForDirectory,
   readAccountKey,
@@ -159,6 +160,28 @@ describe("account initialization", () => {
     expect((await personal.getAuth("openrouter"))?.auth.apiKey).toBe("router-test-key");
     expect(readJson(profileAuthPath(agent, "personal"))["openai-codex"]).toEqual(oauth);
     expect(Object.keys(readJson(profileAuthPath(agent, "work")))).toEqual(["google"]);
+  });
+
+  test("seeds a profile's managed key only when its store lacks one, and tolerates absent secrets", async () => {
+    const { root, agent } = fixture();
+    ensureProfileFiles(agent);
+    json(profileAuthPath(agent, "personal"), { "openai-codex": oauth });
+    const personal = await runtimeFor(agent, "personal");
+    // No secret file yet (a machine where install.nu never ran): not an error, nothing changes.
+    expect(await importMissingAccountKey(personal, agent, "personal")).toBeFalse();
+    expect(readJson(profileAuthPath(agent, "personal"))).toEqual({ "openai-codex": oauth });
+    mkdirSync(join(root, "secrets"));
+    json(join(root, "secrets/personal.json"), { openrouter: { apiKey: "router-test-key" } });
+    expect(await importMissingAccountKey(personal, agent, "personal")).toBeTrue();
+    expect((await personal.getAuth("openrouter"))?.auth.apiKey).toBe("router-test-key");
+    expect(readJson(profileAuthPath(agent, "personal"))["openai-codex"]).toEqual(oauth);
+    // An existing login is never overwritten by the secret file.
+    json(join(root, "secrets/personal.json"), { openrouter: { apiKey: "rotated-key" } });
+    expect(await importMissingAccountKey(personal, agent, "personal")).toBeFalse();
+    expect((await personal.getAuth("openrouter"))?.auth.apiKey).toBe("router-test-key");
+    // Only the bound profile's file may receive the key.
+    await expect(importMissingAccountKey(personal, agent, "work")).rejects.toThrow("not bound to work");
+    expect(readJson(profileAuthPath(agent, "work"))).toEqual({});
   });
 
   test("missing, unexpanded, and malformed secret files fail without exposing contents", () => {

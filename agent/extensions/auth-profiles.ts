@@ -19,6 +19,7 @@ import {
   copilotFromGh,
   ensureProfileFiles,
   importAccountKey,
+  importMissingAccountKey,
   isProfileName,
   PROFILE_NAMES,
   type ProfileName,
@@ -160,13 +161,22 @@ export async function ensureProfileModel(
 ): Promise<void> {
   if (ctx.model && providerAllowed(profile, ctx.model.provider)) return;
   let candidates = ctx.modelRegistry.getAvailable().filter((model) => providerAllowed(profile, model.provider));
+  if (candidates.length === 0) {
+    throw new Error(
+      `No ${profile} model is available: none of ${providersFor(profile).join(", ")} has a saved login in ${profileAuthPath(getAgentDir(), profile)}. Run /log-me-in (or ~/.pi/scripts/install.nu) to connect one.`,
+    );
+  }
+  const rejected: string[] = [];
   while (candidates.length) {
     const next = chooseProfileModel(candidates, profile, remembered);
     if (!next) break;
     if (await pi.setModel(next)) return;
+    rejected.push(next.provider);
     candidates = candidates.filter((model) => model.provider !== next.provider);
   }
-  throw new Error(`No usable ${profile} model. Run /log-me-in. The previous provider is blocked.`);
+  throw new Error(
+    `No usable ${profile} model: Pi rejected the saved login for ${rejected.join(", ")}. Run /log-me-in.`,
+  );
 }
 
 const startupBindingMarker = Symbol.for("pi.auth-profile.startup-binding");
@@ -214,33 +224,48 @@ export default function authProfiles(pi: ExtensionAPI) {
     ctx.ui.setStatus("auth-profile", ctx.ui.theme.fg("accent", `profile: ${activeProfile}`));
   const ensureModel = (ctx: ExtensionContext) =>
     ensureProfileModel(pi, ctx, activeProfile, remembered.get(activeProfile));
-  const switchProfile = async (ctx: ExtensionContext, profile: ProfileName) => {
+  // Binds the profile's credential store and seeds its managed API key from the
+  // local secret file before refreshing, so a checkout whose profile file was
+  // never initialized still comes up with a usable model.
+  const prepareProfile = async (ctx: ExtensionContext, profile: ProfileName) => {
+    const runtime = getRuntime(ctx.modelRegistry);
+    bindRuntimeProfile(runtime, agentDir, profile);
+    activeProfile = profile;
+    await closeProviderSessions();
+    await importMissingAccountKey(runtime, agentDir, profile);
+  };
+  const refreshProfile = (ctx: ExtensionContext, profile: ProfileName) =>
+    ctx.modelRegistry.refresh({
+      providers: providersFor(profile),
+      allowNetwork: false,
+      signal: AbortSignal.timeout(5_000),
+    });
+  /**
+   * Switches accounts. `login` runs after the target profile's credentials are
+   * bound but before a model is required, so /log-me-in can connect an account
+   * in a profile that has no usable login yet instead of being refused.
+   */
+  const switchProfile = async (
+    ctx: ExtensionContext,
+    profile: ProfileName,
+    login?: (ctx: ExtensionContext) => Promise<void>,
+  ) => {
     if (ctx.model && providerAllowed(activeProfile, ctx.model.provider)) remembered.set(activeProfile, ctx.model);
     const previousProfile = activeProfile;
-    bindRuntimeProfile(getRuntime(ctx.modelRegistry), agentDir, profile);
-    activeProfile = profile;
     try {
-      await closeProviderSessions();
-      await ctx.modelRegistry.refresh({
-        providers: providersFor(profile),
-        allowNetwork: false,
-        signal: AbortSignal.timeout(5_000),
-      });
+      await prepareProfile(ctx, profile);
+      await refreshProfile(ctx, profile);
+      if (login) {
+        await login(ctx);
+        await refreshProfile(ctx, profile);
+      }
       await ensureModel(ctx);
-    } catch {
+    } catch (error) {
       activeProfile = previousProfile;
       bindRuntimeProfile(getRuntime(ctx.modelRegistry), agentDir, previousProfile);
-      await ctx.modelRegistry
-        .refresh({
-          providers: providersFor(previousProfile),
-          allowNetwork: false,
-          signal: AbortSignal.timeout(5_000),
-        })
-        .catch(() => {});
-      ctx.ui.notify(
-        `Could not select a usable ${profile} model; staying on ${previousProfile}. Run /log-me-in.`,
-        "error",
-      );
+      await refreshProfile(ctx, previousProfile).catch(() => {});
+      const reason = error instanceof Error && error.message ? error.message : `Could not switch to ${profile}.`;
+      ctx.ui.notify(`Staying on ${previousProfile}. ${reason}`, "error");
       return false;
     }
     process.env.PI_AUTH_PROFILE = profile; // spawned Pi/subagents inherit this session's profile
@@ -261,7 +286,10 @@ export default function authProfiles(pi: ExtensionAPI) {
     refreshRegistryInBackground(
       ctx.modelRegistry,
       providersFor(activeProfile),
-      closeProviderSessions,
+      async () => {
+        await closeProviderSessions();
+        await importMissingAccountKey(getRuntime(ctx.modelRegistry), agentDir, activeProfile);
+      },
       5_000,
       async () => {
         if (!shutdown.signal.aborted && !busy) {
@@ -433,18 +461,21 @@ export default function authProfiles(pi: ExtensionAPI) {
             ? ACCOUNTS.find((a) => a.id === requested)
             : ACCOUNTS[choices.indexOf(choice ?? "")];
           if (!account) return;
-          if (account.profile !== activeProfile) {
-            if (
-              !(await ctx.ui.confirm(
-                `Switch to ${account.profile}?`,
-                "This changes the available providers and active model. The current conversation is retained; use /new if it should not cross accounts.",
-              ))
-            )
-              continue;
-            if (!(await switchProfile(ctx, account.profile))) return;
+          if (account.profile === activeProfile) {
+            await loginAccount(account, ctx);
+            await ensureModel(ctx);
+            continue;
           }
-          await loginAccount(account, ctx);
-          await ensureModel(ctx);
+          if (
+            !(await ctx.ui.confirm(
+              `Switch to ${account.profile}?`,
+              "This changes the available providers and active model. The current conversation is retained; use /new if it should not cross accounts.",
+            ))
+          )
+            continue;
+          // Log in while the target profile is bound, before a model is required:
+          // the account being connected may be the profile's only login.
+          if (!(await switchProfile(ctx, account.profile, (switched) => loginAccount(account, switched)))) return;
         } while (!requested);
       } catch {
         ctx.ui.notify(
