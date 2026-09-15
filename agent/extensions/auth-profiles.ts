@@ -184,6 +184,19 @@ export async function ensureProfileModel(
 const startupBindingMarker = Symbol.for("pi.auth-profile.startup-binding");
 
 /**
+ * A spawned Pi process inherits the parent's selected auth profile. Preserve an
+ * allowed model that its launcher selected explicitly instead of replacing it
+ * with the profile default during the child's asynchronous startup refresh.
+ */
+export function inheritedLaunchModel(
+  model: Model<Api> | undefined,
+  profile: ProfileName,
+  inheritedProfile: string | undefined,
+): Model<Api> | undefined {
+  return inheritedProfile === profile && model && providerAllowed(profile, model.provider) ? model : undefined;
+}
+
+/**
  * Applies a profile's saved default model (and thinking level) so each account
  * starts on its own model instead of pi's single global default or the first
  * available fallback. A model remembered from this session wins, keeping
@@ -254,8 +267,8 @@ export default function authProfiles(pi: ExtensionAPI) {
     ctx.ui.setStatus("auth-profile", ctx.ui.theme.fg("accent", `profile: ${activeProfile}`));
   const ensureModel = (ctx: ExtensionContext) =>
     ensureProfileModel(pi, ctx, activeProfile, remembered.get(activeProfile));
-  const applyDefault = (ctx: ExtensionContext, profile: ProfileName) =>
-    applyProfileDefault(pi, ctx, profile, remembered.get(profile));
+  const applyDefault = (ctx: ExtensionContext, profile: ProfileName, launchModel?: Model<Api>) =>
+    applyProfileDefault(pi, ctx, profile, remembered.get(profile) ?? launchModel);
   // Binds the profile's credential store and seeds its managed API key from the
   // local secret file before refreshing, so a checkout whose profile file was
   // never initialized still comes up with a usable model.
@@ -312,7 +325,11 @@ export default function authProfiles(pi: ExtensionAPI) {
     // Only auto-select on process startup. /reload, /new, and session switches
     // retain a manual selection; directory selection never changes the saved default.
     const startup = event.reason === "startup";
+    const inheritedProfile = process.env.PI_AUTH_PROFILE;
     if (startup) activeProfile = profileForDirectory(ctx.cwd) ?? activeProfile;
+    // pi-subagents and other spawned Pi processes inherit PI_AUTH_PROFILE. Their
+    // launcher may already have selected a model, which must win over the default.
+    const launchModel = startup ? inheritedLaunchModel(ctx.model, activeProfile, inheritedProfile) : undefined;
     ensureProfileFiles(agentDir);
     bindRuntimeProfile(getRuntime(ctx.modelRegistry), agentDir, activeProfile);
     process.env.PI_AUTH_PROFILE = activeProfile;
@@ -327,7 +344,7 @@ export default function authProfiles(pi: ExtensionAPI) {
       5_000,
       async () => {
         if (!shutdown.signal.aborted && !busy) {
-          if (startup) await applyDefault(ctx, activeProfile).catch(() => {});
+          if (startup) await applyDefault(ctx, activeProfile, launchModel).catch(() => {});
           await ensureModel(ctx).catch((error: Error) => ctx.ui.notify(error.message, "error"));
         }
       },

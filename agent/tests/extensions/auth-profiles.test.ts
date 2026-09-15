@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { _test, applyProfileDefault, ensureProfileModel, promptWithSignal } from "../../extensions/auth-profiles";
+import {
+  _test,
+  applyProfileDefault,
+  ensureProfileModel,
+  inheritedLaunchModel,
+  promptWithSignal,
+} from "../../extensions/auth-profiles";
 import { PROFILE_DEFAULTS, profileAuthPath } from "../../extensions/shared/accounts.js";
 
 const codex = { provider: "openai-codex", id: "personal-model" } as Model<Api>;
@@ -125,6 +131,30 @@ test("applyProfileDefault selects the profile's saved default and thinking level
       "work",
     ),
   ).toBeFalse();
+});
+
+test("an inherited profile preserves an allowed subagent launch model and thinking level", async () => {
+  const profileDefault = { provider: "claude-bridge", id: PROFILE_DEFAULTS.work.model } as Model<Api>;
+  const launched = { provider: "google", id: "gemini-3.8-flash" } as Model<Api>;
+  const inherited = inheritedLaunchModel(launched, "work", "work");
+
+  expect(inherited).toBe(launched);
+  await applyProfileDefault(
+    {
+      setModel: async () => {
+        throw new Error("must not replace the subagent launch model");
+      },
+      setThinkingLevel: () => {
+        throw new Error("must not replace the subagent thinking level");
+      },
+    },
+    { model: launched, modelRegistry: modelContext([profileDefault, launched]).modelRegistry },
+    "work",
+    inherited,
+  );
+
+  expect(inheritedLaunchModel(codex, "work", "work")).toBeUndefined();
+  expect(inheritedLaunchModel(launched, "work", "personal")).toBeUndefined();
 });
 
 describe("OAuth interaction", () => {
