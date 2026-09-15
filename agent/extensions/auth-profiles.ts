@@ -21,9 +21,11 @@ import {
   importAccountKey,
   importMissingAccountKey,
   isProfileName,
+  PROFILE_DEFAULTS,
   PROFILE_NAMES,
   type ProfileName,
   profileAuthPath,
+  profileDefaultModel,
   profileForDirectory,
   providerAllowed,
   providersFor,
@@ -180,6 +182,34 @@ export async function ensureProfileModel(
 }
 
 const startupBindingMarker = Symbol.for("pi.auth-profile.startup-binding");
+
+/**
+ * Applies a profile's saved default model (and thinking level) so each account
+ * starts on its own model instead of pi's single global default or the first
+ * available fallback. A model remembered from this session wins, keeping
+ * manual /model choices across /profile switches; the thinking level is only
+ * managed alongside the saved default model.
+ */
+export async function applyProfileDefault(
+  pi: Pick<ExtensionAPI, "setModel" | "setThinkingLevel">,
+  ctx: Pick<ExtensionContext, "model" | "modelRegistry">,
+  profile: ProfileName,
+  remembered?: Model<Api>,
+): Promise<boolean> {
+  const available = ctx.modelRegistry.getAvailable().filter((model) => providerAllowed(profile, model.provider));
+  const rememberedAvailable =
+    remembered && available.some((model) => model.provider === remembered.provider && model.id === remembered.id)
+      ? remembered
+      : undefined;
+  const target = rememberedAvailable ?? profileDefaultModel(available, profile);
+  if (!target) return false;
+  const current = ctx.model;
+  if (!current || current.provider !== target.provider || current.id !== target.id) {
+    if (!(await pi.setModel(target))) return false;
+  }
+  if (!rememberedAvailable) pi.setThinkingLevel(PROFILE_DEFAULTS[profile].thinking);
+  return true;
+}
 type RefreshOptions = { providers?: string[]; allowNetwork?: boolean; signal?: AbortSignal };
 type RefreshTarget = {
   refresh?: (this: ModelRuntime, options?: RefreshOptions) => Promise<unknown>;
@@ -224,6 +254,8 @@ export default function authProfiles(pi: ExtensionAPI) {
     ctx.ui.setStatus("auth-profile", ctx.ui.theme.fg("accent", `profile: ${activeProfile}`));
   const ensureModel = (ctx: ExtensionContext) =>
     ensureProfileModel(pi, ctx, activeProfile, remembered.get(activeProfile));
+  const applyDefault = (ctx: ExtensionContext, profile: ProfileName) =>
+    applyProfileDefault(pi, ctx, profile, remembered.get(profile));
   // Binds the profile's credential store and seeds its managed API key from the
   // local secret file before refreshing, so a checkout whose profile file was
   // never initialized still comes up with a usable model.
@@ -259,6 +291,7 @@ export default function authProfiles(pi: ExtensionAPI) {
         await login(ctx);
         await refreshProfile(ctx, profile);
       }
+      await applyDefault(ctx, profile);
       await ensureModel(ctx);
     } catch (error) {
       activeProfile = previousProfile;
@@ -278,7 +311,8 @@ export default function authProfiles(pi: ExtensionAPI) {
   pi.on("session_start", (event, ctx) => {
     // Only auto-select on process startup. /reload, /new, and session switches
     // retain a manual selection; directory selection never changes the saved default.
-    if (event.reason === "startup") activeProfile = profileForDirectory(ctx.cwd) ?? activeProfile;
+    const startup = event.reason === "startup";
+    if (startup) activeProfile = profileForDirectory(ctx.cwd) ?? activeProfile;
     ensureProfileFiles(agentDir);
     bindRuntimeProfile(getRuntime(ctx.modelRegistry), agentDir, activeProfile);
     process.env.PI_AUTH_PROFILE = activeProfile;
@@ -293,6 +327,7 @@ export default function authProfiles(pi: ExtensionAPI) {
       5_000,
       async () => {
         if (!shutdown.signal.aborted && !busy) {
+          if (startup) await applyDefault(ctx, activeProfile).catch(() => {});
           await ensureModel(ctx).catch((error: Error) => ctx.ui.notify(error.message, "error"));
         }
       },

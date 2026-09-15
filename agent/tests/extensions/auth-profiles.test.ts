@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { _test, ensureProfileModel, promptWithSignal } from "../../extensions/auth-profiles";
-import { profileAuthPath } from "../../extensions/shared/accounts.js";
+import { _test, applyProfileDefault, ensureProfileModel, promptWithSignal } from "../../extensions/auth-profiles";
+import { PROFILE_DEFAULTS, profileAuthPath } from "../../extensions/shared/accounts.js";
 
 const codex = { provider: "openai-codex", id: "personal-model" } as Model<Api>;
 const copilot = { provider: "github-copilot", id: "work-model" } as Model<Api>;
@@ -52,6 +52,79 @@ test("failed model selection cannot be reported as a successful profile switch",
   ).rejects.toThrow(
     /No work model is available: none of github-copilot, google, claude-bridge has a saved login in .*work\.json/,
   );
+});
+
+test("applyProfileDefault selects the profile's saved default and thinking level", async () => {
+  const work = { provider: "claude-bridge", id: PROFILE_DEFAULTS.work.model } as Model<Api>;
+  const rememberedWork = { provider: "google", id: "work-remembered" } as Model<Api>;
+  const ctx = modelContext([codex, work, rememberedWork]);
+  const levels: string[] = [];
+  const changed: string[] = [];
+  await applyProfileDefault(
+    {
+      setModel: async (model) => {
+        changed.push(`${model.provider}/${model.id}`);
+        return true;
+      },
+      setThinkingLevel: (level) => levels.push(level),
+    },
+    ctx,
+    "work",
+  );
+  expect(changed).toEqual([`claude-bridge/${PROFILE_DEFAULTS.work.model}`]);
+  expect(levels).toEqual([PROFILE_DEFAULTS.work.thinking]);
+
+  // A model remembered from this session wins over the saved default,
+  // and the thinking level is left alone.
+  changed.length = 0;
+  levels.length = 0;
+  await applyProfileDefault(
+    {
+      setModel: async () => {
+        throw new Error("must not switch away from the remembered model");
+      },
+      setThinkingLevel: () => {
+        throw new Error("must not override remembered thinking");
+      },
+    },
+    { ...ctx, model: rememberedWork },
+    "work",
+    rememberedWork,
+  );
+  expect(changed).toEqual([]);
+  expect(levels).toEqual([]);
+
+  // A remembered model the profile can no longer see is ignored.
+  changed.length = 0;
+  await applyProfileDefault(
+    {
+      setModel: async (model) => {
+        changed.push(`${model.provider}/${model.id}`);
+        return true;
+      },
+      setThinkingLevel: () => {},
+    },
+    { ...ctx, model: codex },
+    "work",
+    codex,
+  );
+  expect(changed).toEqual([`claude-bridge/${PROFILE_DEFAULTS.work.model}`]);
+
+  // No default match (or rejected selection) reports failure without changing anything.
+  expect(
+    await applyProfileDefault(
+      { setModel: async () => true, setThinkingLevel: () => {} },
+      modelContext([codex]),
+      "work",
+    ),
+  ).toBeFalse();
+  expect(
+    await applyProfileDefault(
+      { setModel: async () => false, setThinkingLevel: () => {} },
+      modelContext([work]),
+      "work",
+    ),
+  ).toBeFalse();
 });
 
 describe("OAuth interaction", () => {

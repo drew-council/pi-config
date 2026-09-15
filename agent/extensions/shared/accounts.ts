@@ -18,6 +18,23 @@ export const providersFor = (profile: ProfileName): string[] =>
   ACCOUNTS.filter((account) => account.profile === profile).map((account) => account.id);
 export const providerAllowed = (profile: ProfileName, provider: string): boolean =>
   providersFor(profile).includes(provider);
+
+export type ProfileThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export type ProfileDefault = { provider: string; model: string; thinking: ProfileThinkingLevel };
+/**
+ * Startup model and thinking level per profile. Applied when a session starts
+ * and on /profile switches; a model chosen manually in a profile during this
+ * session still wins over the saved default.
+ */
+export const PROFILE_DEFAULTS: Record<ProfileName, ProfileDefault> = {
+  work: { provider: "claude-bridge", model: "claude-opus-5", thinking: "medium" },
+  personal: { provider: "openrouter", model: "z-ai/glm-5.3-flash", thinking: "high" },
+};
+/** The profile's saved default when it appears among `models` (call with available, profile-allowed models). */
+export function profileDefaultModel(models: readonly Model<Api>[], profile: ProfileName): Model<Api> | undefined {
+  const wanted = PROFILE_DEFAULTS[profile];
+  return models.find((model) => model.provider === wanted.provider && model.id === wanted.model);
+}
 export const isProfileName = (value: unknown): value is ProfileName => value === "work" || value === "personal";
 export const profileAuthPath = (agentDir: string, profile: ProfileName) =>
   join(agentDir, "auth-profiles", `${profile}.json`);
