@@ -6,7 +6,7 @@ Pi's prompt area is backed by a real `nvim --embed` process connected through a 
 
 - Neovim 0.10 or newer must be available as `nvim` on `PATH`.
 - The editor intentionally loads the normal user Neovim configuration. It does not silently retry with `--clean`.
-- Pi hides Neovim's redundant statusline and built-in mode row while retaining its native command line and messages. The active Neovim mode appears as a badge in Pi's lower editor border.
+- Pi hides Neovim's redundant statusline and built-in mode row. Its command line remains available in the prompt grid, while Neovim messages—including errors—are forwarded to Pi notifications so they remain visible. The active Neovim mode appears as a badge in Pi's lower editor border.
 - One Neovim child is started per interactive Pi session and stopped during `/reload` or shutdown.
 - The prompt uses a scratch buffer named `[Pi Prompt]` with Markdown filetype.
 
@@ -28,6 +28,6 @@ Prompt history remains in `~/.pi/agent/prompt-history.json`; `/history-clear` cl
 ## Current limitations
 
 - Mouse events are not forwarded because Pi's component API does not expose the prompt grid's absolute screen origin.
-- Neovim optional external widgets and multigrid are disabled. Command line, messages, popup menus, floating windows, and plugin UI are composed by Neovim into its normal line grid.
+- Neovim optional external widgets and multigrid are disabled. The command line is rendered in Pi's final prompt-grid row; popup menus, floating windows, and plugin UI are composed by Neovim into its normal line grid. Messages are forwarded to Pi notifications so error text remains visible even when the prompt grid is short.
 - Opening another Neovim buffer is allowed and displayed, but Pi autocomplete pauses until `[Pi Prompt]` is current again. Pi submission always reads the dedicated prompt buffer.
 - The grid starts at one row, grows with Neovim's measured display height, and then scrolls at Pi's terminal-relative editor maximum.

@@ -20,6 +20,7 @@ export interface NeovimHostOptions {
   onSubmit: () => void;
   onRequestExit: () => void;
   onError: (message: string) => void;
+  onMessage?: (message: string, kind: string) => void;
   onExit: (unexpected: boolean, message?: string) => void;
   onRender: () => void;
 }
@@ -143,6 +144,7 @@ export class NeovimHost {
   private inputQueue: Array<{ kind: "keys" | "paste"; value: string }> = [];
   private operation = Promise.resolve();
   private syncScheduled = false;
+  private readonly commandLines = new Map<number, { text: string; byteColumn: number }>();
   private stderrTail = "";
   private exitRequested = false;
 
@@ -235,6 +237,43 @@ export class NeovimHost {
     if (method === "pi_submit") this.options.onSubmit();
     if (method === "pi_exit") this.requestExit();
     if (method === "pi_state_dirty") this.scheduleStateSync();
+    if (method === "pi_message") {
+      const message = typeof args[0] === "string" ? args[0] : "";
+      const kind = typeof args[1] === "string" ? args[1] : "";
+      if (message) this.options.onMessage?.(message, kind);
+    }
+    if (method === "pi_cmdline_show") {
+      const text = typeof args[0] === "string" ? args[0] : "";
+      const byteColumn = Number(args[1]);
+      const level = Number(args[2]);
+      if (Number.isFinite(level)) {
+        this.commandLines.set(level, { text, byteColumn: Number.isFinite(byteColumn) ? byteColumn : 0 });
+        this.updateExternalCommandLine();
+      }
+    }
+    if (method === "pi_cmdline_pos") {
+      const byteColumn = Number(args[0]);
+      const level = Number(args[1]);
+      const commandLine = this.commandLines.get(level);
+      if (commandLine && Number.isFinite(byteColumn)) {
+        commandLine.byteColumn = byteColumn;
+        this.updateExternalCommandLine();
+      }
+    }
+    if (method === "pi_cmdline_hide") {
+      const level = Number(args[0]);
+      if (this.commandLines.delete(level)) this.updateExternalCommandLine();
+    }
+  }
+
+  private updateExternalCommandLine(): void {
+    const level = Math.max(...this.commandLines.keys());
+    const commandLine = this.commandLines.get(level);
+    this.grid.setExternalCommandLine(
+      commandLine?.text,
+      commandLine ? byteColumnToStringColumn(commandLine.text, commandLine.byteColumn) : 0,
+    );
+    this.options.onRender();
   }
 
   private requestExit(): void {

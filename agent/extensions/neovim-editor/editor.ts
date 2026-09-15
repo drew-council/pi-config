@@ -112,6 +112,10 @@ export class NeovimEditor implements EditorComponent {
         this.error = message;
         this.options.notify(message, "error");
       },
+      onMessage: (message, kind) => {
+        const level = /err|^emsg$|^wmsg$/i.test(kind) ? "error" : "info";
+        this.options.notify(`nvim: ${message}`, level);
+      },
       onExit: (unexpected, message) => {
         if (!unexpected || this.disposed) return;
         if (this.restartCount < 1) {

@@ -20,6 +20,7 @@ test("a real embedded Neovim owns editing, state synchronization, and shutdown",
   let latestDisplayHeight = 0;
   let exitRequests = 0;
   const errors: string[] = [];
+  const messages: Array<{ text: string; kind: string }> = [];
   const host = new NeovimHost({
     cwd: process.cwd(),
     args: ["--clean", "--embed"],
@@ -32,6 +33,7 @@ test("a real embedded Neovim owns editing, state synchronization, and shutdown",
       exitRequests += 1;
     },
     onError: (message) => errors.push(message),
+    onMessage: (text, kind) => messages.push({ text, kind }),
     onExit: () => undefined,
     onRender: () => undefined,
   });
@@ -66,6 +68,10 @@ test("a real embedded Neovim owns editing, state synchronization, and shutdown",
     expect(host.grid.render(false).join("\n")).toContain(":");
     host.sendKeys("<Esc>");
     await waitFor(() => host.mode === "normal");
+
+    host.sendKeys(":echoerr 'Pi message test'<CR>");
+    await waitFor(() => messages.some(({ text }) => text.includes("Pi message test")));
+    expect(messages.at(-1)?.kind).toMatch(/err|emsg/i);
 
     await host.setState(["emoji 😀", "second"], 0, 8);
     await waitFor(() => latestText === "emoji 😀\nsecond" && latestDisplayHeight === 2);

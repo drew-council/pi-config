@@ -1,11 +1,56 @@
 local channel, lines, row, byte_col = ...
 
--- Pi renders the active mode in its editor border. Keep Neovim's native
--- command line and messages, but omit its redundant statusline and mode row.
+-- Pi renders the active mode in its editor border. Omit Neovim's redundant
+-- statusline and mode row; command-line and message presentation is handled
+-- below because the prompt grid is intentionally compact.
 vim.o.laststatus = 0
 vim.o.showmode = false
 vim.o.ruler = false
 vim.o.cmdheight = 0
+
+-- The embedded grid is only as tall as the prompt, so Neovim's native message
+-- rendering would overwrite the buffer content and hide the actual text behind
+-- its "Press ENTER or type command to continue" hit-enter prompt. Intercept
+-- messages and forward them to Pi's notification system instead. Message
+-- history (:messages) is unaffected; the command line remains available.
+local function message_text(content)
+  local chunks = {}
+  for _, chunk in ipairs(content) do
+    chunks[#chunks + 1] = tostring(chunk[2] or "")
+  end
+  return table.concat(chunks):gsub("\r\n?", "\n")
+end
+
+local message_namespace = vim.api.nvim_create_namespace("PiMessages")
+local message_ok, message_error = pcall(vim.ui_attach, message_namespace, { ext_messages = true }, function(event, ...)
+  -- ext_messages also externalizes the command line. Keep it in Pi's final
+  -- grid row, while forwarding the otherwise hidden messages as notifications.
+  if event == "cmdline_show" then
+    local content, pos, firstc, prompt, indent, level = ...
+    local prefix = (firstc ~= "" and firstc) or prompt or ""
+    local text = prefix .. string.rep(" ", indent or 0) .. message_text(content)
+    vim.rpcnotify(channel, "pi_cmdline_show", text, (pos or 0) + #prefix + (indent or 0), level or 1)
+  elseif event == "cmdline_pos" then
+    local pos, level = ...
+    vim.rpcnotify(channel, "pi_cmdline_pos", pos or 0, level or 1)
+  elseif event == "cmdline_hide" then
+    local level = ...
+    vim.rpcnotify(channel, "pi_cmdline_hide", level or 1)
+  elseif event == "msg_show" then
+    local kind, content = ...
+    local text = message_text(content)
+    -- kind "return_prompt" is the empty hit-enter prompt itself; the message
+    -- that triggered it was already forwarded.
+    if text ~= "" and kind ~= "return_prompt" then
+      vim.rpcnotify(channel, "pi_message", text, kind)
+    end
+  end
+end)
+if not message_ok then
+  vim.schedule(function()
+    vim.rpcnotify(channel, "pi_message", "Message interception unavailable: " .. tostring(message_error), "wmsg")
+  end)
+end
 
 local buffer = vim.api.nvim_create_buf(false, true)
 vim.g.pi_prompt_buffer = buffer

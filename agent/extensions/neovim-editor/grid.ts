@@ -99,6 +99,7 @@ export class NeovimGrid {
   private cursorStyleEnabled = false;
   private modeInfos: ModeInfo[] = [];
   private modeIndex = 0;
+  private externalCommandLine?: { text: string; cursorColumn: number };
   private frameVersion = 0;
 
   onFlush?: () => void;
@@ -119,6 +120,10 @@ export class NeovimGrid {
   get size(): { width: number; height: number } {
     const grid = this.grids.get(1);
     return { width: grid?.width ?? 0, height: grid?.height ?? 0 };
+  }
+
+  setExternalCommandLine(text: string | undefined, cursorColumn = 0): void {
+    this.externalCommandLine = text === undefined ? undefined : { text, cursorColumn: Math.max(0, cursorColumn) };
   }
 
   handleRedraw(events: unknown[]): void {
@@ -253,7 +258,7 @@ export class NeovimGrid {
     const grid = this.grids.get(1);
     if (!grid) return [];
 
-    return grid.rows.map((row, rowIndex) => {
+    const rows = grid.rows.map((row, rowIndex) => {
       let output = "";
       let activeHighlight = -1;
       for (let column = 0; column < grid.width; column += 1) {
@@ -273,5 +278,34 @@ export class NeovimGrid {
       const missing = grid.width - cellWidth(output);
       return missing > 0 ? `${output}${" ".repeat(missing)}` : output;
     });
+
+    // ext_messages also externalizes Neovim's command line. Keep it visible
+    // in the normal grid's final row so ex/search commands retain their native
+    // prompt behavior while messages can be surfaced by Pi.
+    if (this.externalCommandLine && rows.length > 0) {
+      rows[rows.length - 1] = this.renderExternalCommandLine(grid.width, focused, softwareCursor);
+    }
+    return rows;
+  }
+
+  private renderExternalCommandLine(width: number, focused: boolean, softwareCursor: boolean): string {
+    const commandLine = this.externalCommandLine;
+    if (!commandLine) return " ".repeat(width);
+
+    // Neovim gives us a string-column cursor position. Show the cursor and
+    // retain the tail nearest it when the command exceeds the prompt width.
+    const cursor = Math.min(commandLine.cursorColumn, commandLine.text.length);
+    const start = Math.max(0, cursor - width + 1);
+    const text = commandLine.text.slice(start, start + width);
+    const cursorInView = cursor - start;
+    let output = "";
+    for (let column = 0; column < width; column += 1) {
+      const hasCursor = focused && column === cursorInView;
+      if (hasCursor) output += CURSOR_MARKER;
+      if (hasCursor && softwareCursor) output += "\x1b[7m";
+      output += text[column] ?? " ";
+      if (hasCursor && softwareCursor) output += "\x1b[27m";
+    }
+    return `${output}\x1b[0m`;
   }
 }
