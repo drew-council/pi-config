@@ -17,7 +17,19 @@
               "data_collection": "deny",
               "zdr": true,
               "only": [
-                "fireworks"
+                "novita/fp8",
+                "deepinfra/fp8",
+                "makora",
+                "modal/fp8",
+                "parasail/fp8",
+                "together",
+                "wafer",
+                "digitalocean",
+                "morph/fp8",
+                "phala/fp8",
+                "fireworks",
+                "baseten/fp8",
+                "venice"
               ],
               "sort": "throughput",
               "max_price": {
