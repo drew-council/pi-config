@@ -10,6 +10,7 @@ secrets/*.json
 # session logs
 agent/sessions/
 agent/plans/
+agent/missions/
 agent/browser-logs/
 agent/transcriptions/
 
