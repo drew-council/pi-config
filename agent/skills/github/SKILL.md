@@ -11,14 +11,13 @@ description: Work with the sheerhealth/sheer GitHub repo, covering pull requests
 
 Requires Go 1.26+ and an authenticated `gh`. The first run compiles dependencies and may take several seconds.
 
+`sheer-gh` is on `PATH` in agent bash calls. Invoke it directly:
+
 ```sh
-SHEER_GH=~/.pi/agent/skills/github/sheer-gh/bin/sheer-gh
-$SHEER_GH ci latest ci
-# Raw equivalent:
-go run -C ~/.pi/agent/skills/github/sheer-gh . --cwd "$PWD" ci latest ci
+sheer-gh ci latest ci
 ```
 
-Read the relevant reference and `$SHEER_GH <group> --help` before acting.
+Read the relevant reference and `sheer-gh <group> --help` before acting.
 
 | Need | Reference | Group |
 | --- | --- | --- |
