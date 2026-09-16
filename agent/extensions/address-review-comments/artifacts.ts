@@ -30,6 +30,7 @@ export interface ReviewArtifactPaths {
 interface CommandRequest {
   arguments: string;
   cwd: string;
+  include_author_comments: boolean;
   requested_pull_number: number | null;
   started_at: string;
 }

@@ -7,6 +7,7 @@ import { parseAddressReviewArgs } from "./args.js";
 import { createReviewArtifactDirectory, writeFetchArtifacts } from "./artifacts.js";
 import { registerCheckpointTool } from "./checkpoint-tool.js";
 import {
+  AUTHOR_COMMENTS_FLAG,
   CHECKPOINT_ENTRY_TYPE,
   CHECKPOINT_TOOL_NAME,
   FETCH_WIDGET_ID,
@@ -18,6 +19,7 @@ import {
   STATE_ENTRY_TYPE,
   STATUS_ID,
 } from "./constants.js";
+import { filterAuthorComments } from "./filters.js";
 import { currentBranch, ensurePullCheckout, pullRequestDiff, resolveRepositoryRoot, shortHead } from "./git.js";
 import { fetchGitHubReviewData, GitHubClient, GitHubUsernameCache } from "./github.js";
 import { makeAgentPrompt, summarizeFetch } from "./prompt.js";
@@ -160,6 +162,7 @@ export default function addressReviewCommentsExtension(pi: ExtensionAPI): void {
       const artifactPaths = await createReviewArtifactDirectory({
         arguments: args,
         cwd: ctx.cwd,
+        include_author_comments: parsed.includeAuthorComments,
         requested_pull_number: parsed.prNumber ?? null,
         started_at: startedAt,
       });
@@ -193,13 +196,17 @@ export default function addressReviewCommentsExtension(pi: ExtensionAPI): void {
       if (githubData.stackError) {
         ctx.ui.notify(`Stack lookup failed; continuing without stack context: ${githubData.stackError}`, "warning");
       }
-      const unresolved = githubData.threads.filter((thread) => !thread.is_resolved);
+      const allUnresolved = githubData.threads.filter((thread) => !thread.is_resolved);
+      const filtered = parsed.includeAuthorComments
+        ? { threads: allUnresolved, reviews: githubData.reviews, skipped: 0 }
+        : filterAuthorComments(allUnresolved, githubData.reviews, pull.author);
+      const unresolved = filtered.threads;
       const responseWithoutPath: Omit<FetchResponse, "authored_diff_path"> = {
         repository,
         github_username: githubUsername,
         pull_request: pull,
         review_threads: unresolved,
-        review_summaries: githubData.reviews,
+        review_summaries: filtered.reviews,
         stack: githubData.stack,
       };
       const response = await writeFetchArtifacts(
@@ -210,6 +217,12 @@ export default function addressReviewCommentsExtension(pi: ExtensionAPI): void {
       );
       progress.complete("artifacts");
 
+      if (filtered.skipped > 0) {
+        ctx.ui.notify(
+          `Skipped ${filtered.skipped} comment(s) authored by @${pull.author}. Use ${AUTHOR_COMMENTS_FLAG} to include them.`,
+          "info",
+        );
+      }
       if (unresolved.length === 0) {
         ctx.ui.notify(`PR #${pull.number} has no unresolved review comments.`, "info");
         return;
@@ -247,7 +260,7 @@ export default function addressReviewCommentsExtension(pi: ExtensionAPI): void {
   };
 
   pi.registerCommand(REVIEW_COMMAND_NAME, {
-    description: "Fetch and address GitHub PR review comments with structured human checkpoints",
+    description: `Fetch and address GitHub PR review comments with structured human checkpoints (${AUTHOR_COMMENTS_FLAG} keeps the PR author's own comments)`,
     getArgumentCompletions: () => null,
     handler: runReviewCommand,
   });

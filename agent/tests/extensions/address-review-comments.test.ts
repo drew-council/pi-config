@@ -12,6 +12,7 @@ import {
 import { createReplyRequest } from "../../extensions/address-review-comments/attribution.js";
 import { REVIEW_COMMAND_NAME, REVIEW_COMMAND_USAGE } from "../../extensions/address-review-comments/constants.js";
 import { queueCheckpointFeedback } from "../../extensions/address-review-comments/feedback-message.js";
+import { filterAuthorComments } from "../../extensions/address-review-comments/filters.js";
 import {
   fetchGitHubReviewData,
   GitHubClient,
@@ -19,7 +20,12 @@ import {
   ReviewThreadResolveError,
 } from "../../extensions/address-review-comments/github.js";
 import { summarizeStack } from "../../extensions/address-review-comments/prompt.js";
-import type { CommandExecutor, ExecResult } from "../../extensions/address-review-comments/types.js";
+import type {
+  CommandExecutor,
+  ExecResult,
+  ReviewComment,
+  ReviewThread,
+} from "../../extensions/address-review-comments/types.js";
 
 function success(stdout: string): ExecResult {
   return { code: 0, stdout, stderr: "" };
@@ -429,6 +435,7 @@ test("keeps workflow requests and fetch artifacts in one temporary directory", a
   const paths = await createReviewArtifactDirectory({
     arguments: "42",
     cwd: "/repo",
+    include_author_comments: false,
     requested_pull_number: 42,
     started_at: "2026-01-01T00:00:00Z",
   });
@@ -493,11 +500,58 @@ test("filters generated files from the authored diff without dropping normal fil
 });
 
 test("validates review command arguments", () => {
-  assert.deepEqual(parseAddressReviewArgs(""), { ok: true, prNumber: undefined });
-  assert.deepEqual(parseAddressReviewArgs("4098"), { ok: true, prNumber: 4098 });
+  assert.deepEqual(parseAddressReviewArgs(""), { ok: true, prNumber: undefined, includeAuthorComments: false });
+  assert.deepEqual(parseAddressReviewArgs("4098"), { ok: true, prNumber: 4098, includeAuthorComments: false });
+  assert.deepEqual(parseAddressReviewArgs("--author-comments"), {
+    ok: true,
+    prNumber: undefined,
+    includeAuthorComments: true,
+  });
+  assert.deepEqual(parseAddressReviewArgs("--author-comments 4098"), {
+    ok: true,
+    prNumber: 4098,
+    includeAuthorComments: true,
+  });
   assert.deepEqual(parseAddressReviewArgs("--auto 4098"), {
     ok: false,
     message: `Unsupported option. Use ${REVIEW_COMMAND_USAGE}.`,
   });
   assert.deepEqual(parseAddressReviewArgs("abc"), { ok: false, message: "PR number must be a positive integer." });
+});
+
+test("skips PR author comments unless they are part of a reviewer conversation", () => {
+  const thread = (id: string, authors: string[]): ReviewThread => ({
+    id,
+    is_resolved: false,
+    is_outdated: false,
+    path: "src/feature.ts",
+    diff_hunk: "",
+    current_start_line: 1,
+    current_end_line: 1,
+    comments: authors.map((author) => ({ body: `note from ${author}`, author, author_is_bot: false })),
+  });
+  const threads = [
+    thread("author-only", ["drew-council"]),
+    thread("reviewer", ["someone-else"]),
+    thread("author-then-reviewer", ["drew-council", "someone-else"]),
+  ];
+  const reviews: ReviewComment[] = [
+    { body: "self note", author: "drew-council", author_is_bot: false },
+    { body: "looks good", author: "someone-else", author_is_bot: false },
+  ];
+
+  const filtered = filterAuthorComments(threads, reviews, "drew-council");
+  assert.deepEqual(
+    filtered.threads.map((entry) => entry.id),
+    ["reviewer", "author-then-reviewer"],
+  );
+  assert.deepEqual(
+    filtered.reviews.map((review) => review.author),
+    ["someone-else"],
+  );
+  assert.equal(filtered.skipped, 2);
+
+  const unknownAuthor = filterAuthorComments(threads, reviews, null);
+  assert.equal(unknownAuthor.threads.length, 3);
+  assert.equal(unknownAuthor.skipped, 0);
 });

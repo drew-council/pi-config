@@ -1,6 +1,7 @@
 export const REVIEW_COMMAND_NAME = "address-review-comments";
 export const REVIEW_COMMAND = `/${REVIEW_COMMAND_NAME}`;
-export const REVIEW_COMMAND_USAGE = `${REVIEW_COMMAND} [PR_NUMBER]`;
+export const AUTHOR_COMMENTS_FLAG = "--author-comments";
+export const REVIEW_COMMAND_USAGE = `${REVIEW_COMMAND} [PR_NUMBER] [${AUTHOR_COMMENTS_FLAG}]`;
 export const REVIEW_COMMAND_ALIAS_NAME = "gh-review-comments";
 export const REVIEW_COMMAND_ALIAS = `/${REVIEW_COMMAND_ALIAS_NAME}`;
 
