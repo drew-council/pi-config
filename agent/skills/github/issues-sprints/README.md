@@ -1,0 +1,59 @@
+# Issues and sprints
+
+An issue is the unit of work. Aim for one issue per PR. The wiki page "Project Management" is the source for the process; this file is the short version plus the commands.
+
+## Fields
+
+An issue has a type, labels, one assignee, and board fields. Only the first two live on the issue itself.
+
+- Type is an org-level issue type, not a label: Bug, Task, Feature, Epic, Meta, Security. The issue forms in `.github/ISSUE_TEMPLATE` set it in the browser. `gh issue create` cannot, so use `issue.sh new`, which reads the type, labels, and headings from the form.
+- Labels categorize: `area/*` (canopy, azalea, app, provider, backend_automation), `lang/*`, `provider/*`, `customer/*`, `proj/*`. `debt` marks tech debt and exempts a PR from the linked-issue check. `highlight` and `internal` steer release notes. `good_first_issue` and `backlog` mean what they say. Run `gh label list --limit 200` for the full set.
+- One assignee. Triage requires a single owner.
+- Epics group work through parent and sub-issues. `issue.sh subs <epic>` lists them, `issue.sh parent <issue> <epic>` attaches one.
+
+## The board
+
+Org project 9 "Sheer" holds the fields that are not on the issue: Status, Priority (High, Med, Low), Timeframe (Now, Next, Later), and Sprint. Status moves Triage, Scoping, Ready, In Progress, In Review, Done, with Blocked and Parked to the side.
+
+Automation does most status moves. A PR that closes an issue moves it to In Progress, In Review, and Done as the PR progresses. Closing an issue sets Done. New issues start in Triage.
+
+An issue is Ready when it has one assignee, a clear title, a scoped description, a type, a priority, and a timeframe.
+
+## Sprints
+
+A sprint is a two-week iteration on the board's Sprint field. A workflow stamps the current sprint on an issue when it is opened (if the field is empty) and again when it is closed or reopened. So a new issue lands in the current sprint by default; move it if the work is not for this sprint. The `Sprint 10` label is not the mechanism and should be ignored.
+
+```sh
+sprint.sh list                       # every sprint with id and dates, current marked
+sprint.sh show 28136                 # Sprint, Status, Priority, Timeframe for an issue
+sprint.sh set 28136                  # current sprint; adds the issue to the board if needed
+sprint.sh set 28136 next             # or a title: "Sprint 12"
+sprint.sh status 28136 "In Progress"
+sprint.sh field 28136 Priority High
+sprint.sh issues current --mine      # slow, about 40 seconds: it pages the whole board
+```
+
+Every write accepts `--dry-run`.
+
+## Creating an issue
+
+Search first so you do not file a duplicate, then pick the form and write a body with its headings. `ops_request` has dropdowns and an owner; file those in the browser.
+
+```sh
+gh issue list --search "emulator slow" --state all
+issue.sh templates                   # forms with the type and labels each applies
+issue.sh template bug                # headings for the body
+issue.sh new --template bug --title "Spanner emulator schema apply makes tests slow" \
+  --body-file body.md --assignee @me --label area/backend_automation
+issue.sh new --template chore --title "..." --body-file body.md --parent 26835 --sprint next
+```
+
+Write the problem, not the implementation. A bug report says what was observed and how to reproduce it. A task says what needs to be done and how to know it is done. Leave design to the PR or a discussion.
+
+## Reading an issue
+
+```sh
+gh issue view 28136 --comments       # body and conversation
+issue.sh show 28136                  # type, parent, labels, assignees, board fields
+issue.sh subs 26835                  # sub-issues of an epic with state
+```
