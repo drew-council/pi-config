@@ -17,6 +17,7 @@
       };
     };
     dos2unix.enable = true;
+    gofumpt.enable = true;
     nixfmt.enable = true;
     ruff-format = {
       enable = true;

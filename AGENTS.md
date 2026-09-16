@@ -8,7 +8,7 @@ Run `./scripts/check.nu` after TypeScript changes. It runs Biome with unsafe fix
 
 # Guidance
 
-- Use the `github` skill for GitHub operations.
+- Use the `github` skill for GitHub operations. Its Go CLI lives in `agent/skills/github/sheer-gh`, follows Sheer's Go conventions, and is checked by `./scripts/check.nu`.
 - When a change needs to be made to a pi npm extension/package, you can use `patch-package` to apply it.
 - This pi installation is used on multiple machines; do not depend on gitignored files or directories being present everywhere.
 

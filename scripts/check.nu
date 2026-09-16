@@ -35,16 +35,29 @@ def main [] {
 
   if ($ts_files | is-empty) {
     say "No TypeScript files found."
-    return
+  } else {
+    say "Running Biome with unsafe fixes"
+    ^$biome check --write --unsafe ...$ts_files
+
+    say "Running tsgo"
+    ^$tsgo -p ($repo | path join "tsconfig.json")
+
+    say "Running Bun unit tests"
+    # Runtime imports must resolve executable JS, not tsgo's declaration-only paths.
+    ^bun test --tsconfig-override ./tsconfig.runtime.json ./agent/tests
   }
 
-  say "Running Biome with unsafe fixes"
-  ^$biome check --write --unsafe ...$ts_files
+  let go_dir = ($repo | path join "agent" "skills" "github" "sheer-gh")
+  say "Running Go vet"
+  ^go -C $go_dir vet ./...
 
-  say "Running tsgo"
-  ^$tsgo -p ($repo | path join "tsconfig.json")
+  if ((which golangci-lint) | is-empty) {
+    print --stderr "warning: golangci-lint is not on PATH; skipping Go lint"
+  } else {
+    say "Running golangci-lint"
+    do { cd $go_dir; ^golangci-lint run }
+  }
 
-  say "Running Bun unit tests"
-  # Runtime imports must resolve executable JS, not tsgo's declaration-only paths.
-  ^bun test --tsconfig-override ./tsconfig.runtime.json ./agent/tests
+  say "Running Go unit tests"
+  ^go -C $go_dir test ./...
 }

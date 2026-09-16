@@ -50,6 +50,8 @@
               ffmpeg
               gh
               git
+              go
+              golangci-lint
               imagemagick
               nushell
               uv

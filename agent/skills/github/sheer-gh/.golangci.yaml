@@ -1,0 +1,13 @@
+version: "2"
+run:
+  timeout: 5m
+formatters:
+  enable: [gci, gofmt, gofumpt, golines]
+  settings:
+    gci:
+      sections: [standard, default, prefix(github.com/drew-council/sheer-gh)]
+    gofumpt:
+      module-path: github.com/drew-council/sheer-gh
+linters:
+  disable: [errcheck]
+  enable: [asciicheck, bidichk, durationcheck, misspell, staticcheck, unused]

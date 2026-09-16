@@ -9,7 +9,7 @@
 # - updates/installs Pi-managed npm packages with Bun from agent/settings.json
 # - initializes isolated work/personal accounts, reusing gh and existing Codex logins
 # - generates local personal/Sheer Health secret files from committed 1Password templates
-# - verifies that Neovim is available for the embedded prompt editor
+# - verifies that Go and Neovim are available for the GitHub CLI and embedded prompt editor
 # - verifies that Pi can resolve the configured packages
 #
 # Usage:
@@ -196,7 +196,7 @@ def main [
   let personal_template = ($secrets_dir | path join "personal.json.tpl")
   let work_template = ($secrets_dir | path join "work.json.tpl")
 
-  let required_commands = ["bun" "pi" "nvim"]
+  let required_commands = ["bun" "go" "pi" "nvim"]
   for cmd in $required_commands {
     if not (command-exists $cmd) {
       error make {msg: $"Missing required command `($cmd)`. Install it, ensure it is on PATH, and rerun this script."}

@@ -1,41 +1,41 @@
 ---
 name: github
-description: Work with the sheerhealth/sheer GitHub repo, covering pull requests, issues, epics, the sprint board, CI runs, discussions, the wiki, and releases. Use for any request that touches GitHub in this repo, however small, even when a single `gh` command looks sufficient. The bundled scripts are the mandatory primary interface; use raw `gh` only for unsupported operations. Trigger on any mention of a PR, issue, epic, sprint, board, triage, review comment, check, CI, workflow, action, run, discussion, spec, TDR, wiki page, release, tag, or deploy.
+description: Work with the sheerhealth/sheer GitHub repo, covering pull requests, issues, epics, the sprint board, CI runs, discussions, the wiki, and releases. Use for any request that touches GitHub in this repo, however small, even when a single `gh` command looks sufficient. The bundled CLI is the mandatory primary interface; use raw `gh` only for unsupported operations. Trigger on any mention of a PR, issue, epic, sprint, board, triage, review comment, check, CI, workflow, action, run, discussion, spec, TDR, wiki page, release, tag, or deploy.
 ---
 
 # GitHub for sheerhealth/sheer
 
-The scripts in this skill are the primary interface to GitHub. **You MUST use a bundled script when it supports the operation, including read-only discovery.** Do not replace a script command with a familiar raw `gh` command just because it looks simpler.
+`sheer-gh` is the primary interface to GitHub. **Use it whenever it supports the operation, including read-only discovery.** Use raw `gh` only for unsupported operations, then return to `sheer-gh`.
 
-For every GitHub task:
+## Setup and invocation
 
-1. Read the README for the relevant area below and check the adjacent script's `--help`.
-2. Use the script for every supported step, including finding IDs, inspecting state, and making changes.
-3. Use raw `gh` only for an operation the scripts do not support. If raw `gh` is needed for one step, return to the script for subsequent supported steps rather than staying in raw-CLI exploration mode.
+Requires Go 1.26+ and an authenticated `gh`. The first run compiles dependencies and may take several seconds.
 
-The scripts use the `gh` CLI internally. The repo is `sheerhealth/sheer` under the `sheerhealth` org, default branch `main`, and the shared `lib.sh` supplies that context. For an unsupported operation, add `--repo sheerhealth/sheer` when outside a checkout, prefer `--json` with `--jq` over parsing text, and use `gh api --paginate` for lists past 100 items.
+```sh
+SHEER_GH=~/.pi/agent/skills/github/sheer-gh/bin/sheer-gh
+$SHEER_GH ci latest ci
+# Raw equivalent:
+go run -C ~/.pi/agent/skills/github/sheer-gh . --cwd "$PWD" ci latest ci
+```
 
-## Where things live
+Read the relevant reference and `$SHEER_GH <group> --help` before acting.
 
-| Need | Lives in | Read |
+| Need | Reference | Group |
 | --- | --- | --- |
-| Work to do, sprints, status board | Issues and org project 9 "Sheer" | [issues-sprints/README.md](issues-sprints/README.md) |
-| Code review, PR descriptions, review threads | Pull requests | [pull-requests/README.md](pull-requests/README.md) |
-| Specs, decisions, ideas, questions | Discussions | [discussions/README.md](discussions/README.md) |
-| Runbooks, setup guides, process docs | Wiki, a git repo of markdown pages | [wiki/README.md](wiki/README.md) |
-| What is deployed, cutting a release | Releases with CalVer tags | [releases/README.md](releases/README.md) |
-| Why CI failed, rerunning it | GitHub Actions | [ci/README.md](ci/README.md) |
+| Work, sprints, status board | [references/issues-sprints.md](references/issues-sprints.md) | `issue`, `sprint` |
+| PR descriptions and review threads | [references/pull-requests.md](references/pull-requests.md) | `pr` |
+| Specs, decisions, ideas | [references/discussions.md](references/discussions.md) | `discussion` |
+| Runbooks and setup guides | [references/wiki.md](references/wiki.md) | `wiki` |
+| Releases and deployment state | [references/releases.md](references/releases.md) | `release` |
+| CI failures and reruns | [references/ci.md](references/ci.md) | `ci` |
 
-Stacked PRs are handled by the separate gh-stack skill. This skill covers everything else.
+Stacked PRs use the separate gh-stack skill.
 
-Each README documents the scripts that sit next to it. They share `lib.sh`, default to `sheerhealth/sheer`, and take `--help`. The script-first rule applies to ordinary `gh pr`, `gh issue`, `gh run`, and `gh workflow` commands too, not only to hand-written GraphQL.
+## Rules
 
-For GitHub Actions, start with `ci/ci.sh`: `list` and `latest` discover runs without a PR number or run ID, `jobs` discovers job names and IDs, and `log` retrieves logs from successful or failed runs and jobs. For example, use `ci/ci.sh latest autoformat` rather than `gh run list`, then `ci/ci.sh log <run-id> apply` rather than `gh run view`.
-
-## Rules for every interaction
-
-- Confirm with the user before anything other people will see: comments, replies, new issues or discussions, wiki pushes, publishing a release. Draft PRs and draft releases do not need confirmation.
-- Comments written by an agent carry an attribution line. The scripts add one by default.
-- Follow the templates in `.github/`. The scripts read them from there, so there is nothing else to keep in sync.
-- Link the issue from every PR with a closing keyword. A workflow rejects PRs over 50 changed lines that mention no issue.
-- Board writes need the `project` token scope. If they fail, run `gh auth refresh -s project`.
+- Confirm before comments, replies, new issues or discussions, wiki pushes, or publishing a release. Draft PRs and draft releases do not need confirmation.
+- Agent-written comments carry the CLI's attribution line unless explicitly disabled.
+- Follow repository templates. The CLI fetches them from GitHub's default branch.
+- Link every PR to an issue with a closing keyword. CI rejects PRs over 50 changed lines without an issue unless labeled `debt`.
+- Board writes need the `project` token scope. On failure run `gh auth refresh -s project`.
+- `--dry-run` previews mutations. `--json` switches structured row output to JSON.
