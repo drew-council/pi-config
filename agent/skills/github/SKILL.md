@@ -9,13 +9,13 @@ description: Work with the sheerhealth/sheer GitHub repo, covering pull requests
 
 ## Invocation
 
-`sheer-gh` is on `PATH` in agent bash calls. Invoke it directly; the first run compiles and may take several seconds.
+`sheer-gh` is on `PATH` in agent bash calls. Invoke it directly:
 
 ```sh
 sheer-gh ci latest ci
 ```
 
-Read the relevant reference and `sheer-gh <group> --help` before acting. Errors that need a fix on the machine, such as a missing token or scope, say so and name the command to run.
+Read the relevant reference and `sheer-gh <group> --help` before acting.
 
 | Need | Reference | Group |
 | --- | --- | --- |

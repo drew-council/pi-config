@@ -1,6 +1,6 @@
 # sheer-gh
 
-A self-contained Go CLI for the `sheerhealth/sheer` GitHub workflow. It uses `go-github` and GraphQL; `gh` is invoked only once to read the authenticated token. Wiki commands additionally use `git`.
+A self-contained Go CLI for the `sheerhealth/sheer` GitHub workflow. It uses `go-github` and GraphQL; `gh` is invoked only once to read the token. Wiki commands additionally use `git`, and attachment downloads from Google Cloud Storage use `gcloud`.
 
 ## Run
 
@@ -9,8 +9,6 @@ bin/sheer-gh --help
 # From any directory:
 ~/.pi/agent/skills/github/sheer-gh/bin/sheer-gh ci latest ci
 ```
-
-Requirements: Go 1.26+ and an authenticated `gh`. `GITHUB_TOKEN` bypasses `gh auth token`. Attachments on Google Cloud Storage are fetched with a `gcloud auth print-access-token` token. The first `go run` compiles dependencies and is slower. Auth and scope failures are reported with the command that fixes them; the docs do not repeat that.
 
 ## Develop
 
