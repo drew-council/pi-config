@@ -26,9 +26,18 @@ The check-linked-issue workflow fails any PR over 50 changed lines whose body me
 
 `highlight`, `internal`, and `dependencies` decide which section of the auto-generated release notes a PR lands in. `debt` skips the linked-issue check. `nostale` keeps a PR out of the stale sweep.
 
+## Reading a PR
+
+```sh
+sheer-gh pr show 28298                    # metadata, body, comments, reviews, and unresolved threads as markdown
+sheer-gh pr show 28298 --all              # include resolved threads
+```
+
+Attachments in the body or any comment are downloaded to `$TMPDIR/sheer-gh/pr-<n>/` and the printed links point at the local files; read them to see screenshots. `--no-comments` and `--no-attachments` narrow the output.
+
 ## Review threads
 
-`gh pr view --comments` shows only the top-level conversation. Inline review comments live in threads, and replies must go to the thread.
+Inline review comments live in threads, and replies must go to the thread. Thread ids (`PRRT_...`) and comment ids appear in the headings.
 
 ```sh
 sheer-gh pr threads list 28298            # unresolved threads with thread ids and comment ids

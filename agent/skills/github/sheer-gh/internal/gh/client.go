@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/google/go-github/v66/github"
@@ -27,13 +28,20 @@ func Token(ctx context.Context, run Runner) (string, error) {
 		}
 	}
 	out, err := run(ctx, "gh", "auth", "token")
+	if err == nil && strings.TrimSpace(string(out)) == "" {
+		err = errors.New("empty token")
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && len(exit.Stderr) > 0 {
+		err = errors.New(strings.TrimSpace(string(exit.Stderr)))
+	}
 	if err != nil {
-		return "", fmt.Errorf("get token with gh auth token: %w", err)
+		return "", fmt.Errorf(
+			"no GitHub token (gh auth token: %v); run: gh auth login, or set GITHUB_TOKEN",
+			err,
+		)
 	}
-	if token := strings.TrimSpace(string(out)); token != "" {
-		return token, nil
-	}
-	return "", errors.New("gh auth token returned an empty token")
+	return strings.TrimSpace(string(out)), nil
 }
 
 type Client struct {
@@ -83,20 +91,24 @@ func (c *Client) GraphQL(
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("github graphql: %s: %s", resp.Status, strings.TrimSpace(string(data)))
-	}
 	var envelope struct {
-		Data   json.RawMessage `json:"data"`
-		Errors []struct {
+		Data    json.RawMessage `json:"data"`
+		Message string          `json:"message"` // set on HTTP-level failures
+		Errors  []struct {
 			Message string `json:"message"`
 		} `json:"errors"`
 	}
-	if err := json.Unmarshal(data, &envelope); err != nil {
+	if err := json.Unmarshal(data, &envelope); err != nil && resp.StatusCode < 300 {
 		return err
 	}
+	if resp.StatusCode >= 300 {
+		if envelope.Message == "" {
+			envelope.Message = strings.TrimSpace(string(data))
+		}
+		return fmt.Errorf("github graphql: %s: %s", resp.Status, envelope.Message)
+	}
 	if len(envelope.Errors) > 0 {
-		return ScopeHint(errors.New(envelope.Errors[0].Message))
+		return errors.New(envelope.Errors[0].Message)
 	}
 	if target == nil {
 		return nil
@@ -104,14 +116,31 @@ func (c *Client) GraphQL(
 	return json.Unmarshal(envelope.Data, target)
 }
 
-func ScopeHint(err error) error {
+var scopesRE = regexp.MustCompile(`scopes: \['([^']+)'`)
+
+// Hint appends the command that fixes a GitHub authentication or scope failure.
+func Hint(err error) error {
 	if err == nil {
 		return nil
 	}
-	lower := strings.ToLower(err.Error())
-	if strings.Contains(lower, "project") &&
-		(strings.Contains(lower, "scope") || strings.Contains(lower, "resource not accessible")) {
-		return fmt.Errorf("%w; run: gh auth refresh -s project", err)
+	msg := err.Error()
+	lower := strings.ToLower(msg)
+	var resp *github.ErrorResponse
+	status := 0
+	if errors.As(err, &resp) && resp.Response != nil {
+		status = resp.Response.StatusCode
+	}
+	switch {
+	case status == http.StatusUnauthorized || strings.Contains(lower, "bad credentials"):
+		return fmt.Errorf("%w; GitHub rejected the token, run: gh auth login", err)
+	case strings.Contains(lower, "scope"):
+		scope := "project"
+		if m := scopesRE.FindStringSubmatch(msg); m != nil {
+			scope = m[1]
+		}
+		return fmt.Errorf("%w; run: gh auth refresh -s %s", err, scope)
+	case strings.Contains(lower, "resource not accessible"):
+		return fmt.Errorf("%w; run: gh auth refresh -s repo,project", err)
 	}
 	return err
 }

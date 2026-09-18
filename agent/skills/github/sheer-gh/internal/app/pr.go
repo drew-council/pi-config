@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +12,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/drew-council/sheer-gh/internal/body"
-	"github.com/drew-council/sheer-gh/internal/output"
+	"github.com/drew-council/sheer-gh/internal/convo"
 	"github.com/drew-council/sheer-gh/internal/prlint"
 	"github.com/drew-council/sheer-gh/internal/refs"
 )
@@ -31,13 +32,21 @@ func prCommand() *cli.Command {
 		Subcommands: []*cli.Command{
 			{Name: "template", Action: prTemplate},
 			{Name: "check", Action: prCheck},
+			{
+				Name: "show",
+				Flags: append(
+					showFlags(),
+					&cli.BoolFlag{Name: "all", Usage: "include resolved threads"},
+				),
+				Action: prShow,
+			},
 			{Name: "recent", Flags: []cli.Flag{&cli.StringFlag{Name: "author"}}, Action: prRecent},
 			{
 				Name: "threads",
 				Subcommands: []*cli.Command{
 					{
 						Name:   "list",
-						Flags:  []cli.Flag{&cli.BoolFlag{Name: "all"}},
+						Flags:  append(showFlags(), &cli.BoolFlag{Name: "all"}),
 						Action: threadList,
 					},
 					{Name: "show", Action: threadShow},
@@ -166,32 +175,73 @@ func prRecent(c *cli.Context) error {
 	return nil
 }
 
-const threadsQuery = `query($owner:String!,$repo:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor} nodes{id isResolved isOutdated path line originalLine comments(first:100){nodes{databaseId author{login} createdAt body}}}}}}}`
+const threadsQuery = `query($owner:String!,$repo:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor} nodes{id isResolved isOutdated path line originalLine comments(first:100){nodes{` + postFields + `}}}}}}}`
 
-type threadsData struct {
-	Repository struct {
-		PullRequest struct {
-			ReviewThreads struct {
-				PageInfo struct {
-					HasNextPage bool
-					EndCursor   string
-				}
-				Nodes []struct {
-					ID                     string
-					IsResolved, IsOutdated bool
-					Path                   string
-					Line, OriginalLine     *int
-					Comments               struct {
+// threads returns the review threads of a PR, each with its comments nested.
+func threads(ctx context.Context, r *Runtime, n int, all bool) ([]convo.Post, error) {
+	var out []convo.Post
+	var cursor any
+	for {
+		var data struct {
+			Repository struct {
+				PullRequest struct {
+					ReviewThreads struct {
+						PageInfo struct {
+							HasNextPage bool
+							EndCursor   string
+						}
 						Nodes []struct {
-							DatabaseID int64
-							Author     struct{ Login string }
-							CreatedAt  string
-							Body       string
+							ID                     string
+							IsResolved, IsOutdated bool
+							Path                   string
+							Line, OriginalLine     *int
+							Comments               struct{ Nodes []post }
 						}
 					}
 				}
 			}
 		}
+		vars := map[string]any{
+			"owner":  r.Config.Owner,
+			"repo":   r.Config.Repo,
+			"number": n,
+			"cursor": cursor,
+		}
+		if err := r.GH.GraphQL(ctx, threadsQuery, vars, &data); err != nil {
+			return nil, err
+		}
+		page := data.Repository.PullRequest.ReviewThreads
+		for _, t := range page.Nodes {
+			if t.IsResolved && !all {
+				continue
+			}
+			line := t.OriginalLine
+			if t.Line != nil {
+				line = t.Line
+			}
+			p := convo.Post{
+				Kind: "thread",
+				ID:   t.ID,
+				Note: fmt.Sprintf("%s:%d", t.Path, value(line)),
+			}
+			if t.IsResolved {
+				p.Note += " resolved"
+			}
+			if t.IsOutdated {
+				p.Note += " outdated"
+			}
+			for _, comment := range t.Comments.Nodes {
+				p.Posts = append(p.Posts, comment.convo("comment"))
+			}
+			if len(p.Posts) > 0 {
+				p.Time = p.Posts[0].Time
+			}
+			out = append(out, p)
+		}
+		if !page.PageInfo.HasNextPage {
+			return out, nil
+		}
+		cursor = page.PageInfo.EndCursor
 	}
 }
 
@@ -204,59 +254,99 @@ func threadList(c *cli.Context) error {
 	if err != nil {
 		return err
 	}
-	cursor := ""
-	for {
-		var data threadsData
-		vars := map[string]any{
-			"owner":  r.Config.Owner,
-			"repo":   r.Config.Repo,
-			"number": n,
-			"cursor": nil,
-		}
-		if cursor != "" {
-			vars["cursor"] = cursor
-		}
-		if err := r.GH.GraphQL(c.Context, threadsQuery, vars, &data); err != nil {
-			return err
-		}
-		page := data.Repository.PullRequest.ReviewThreads
-		for _, t := range page.Nodes {
-			if t.IsResolved && !trailingBool(c, "all") {
-				continue
-			}
-			line := t.OriginalLine
-			if t.Line != nil {
-				line = t.Line
-			}
-			fmt.Fprintf(
-				r.Out,
-				"=== thread %s  %s:%d  resolved=%t outdated=%t\n",
-				t.ID,
-				t.Path,
-				value(line),
-				t.IsResolved,
-				t.IsOutdated,
-			)
-			for _, comment := range t.Comments.Nodes {
-				fmt.Fprintf(
-					r.Out,
-					"  [comment %d] @%s %s\n",
-					comment.DatabaseID,
-					comment.Author.Login,
-					first(comment.CreatedAt, 10),
-				)
-				for _, line := range strings.Split(comment.Body, "\n") {
-					fmt.Fprintf(r.Out, "      %s\n", line)
-				}
-			}
-			fmt.Fprintln(r.Out)
-		}
-		if !page.PageInfo.HasNextPage {
-			break
-		}
-		cursor = page.PageInfo.EndCursor
+	posts, err := threads(c.Context, r, n, trailingBool(c, "all"))
+	if err != nil {
+		return err
 	}
-	return nil
+	return r.show(c, &convo.Doc{Slug: fmt.Sprintf("pr-%d-threads", n), Posts: posts})
+}
+
+func prShow(c *cli.Context) error {
+	if err := needArg(c, 0, "pr"); err != nil {
+		return err
+	}
+	r := rt(c)
+	n, err := refs.Number(c.Args().First())
+	if err != nil {
+		return err
+	}
+	var data struct {
+		Repository struct {
+			PullRequest *struct {
+				Number                             int
+				Title, State, URL, Body, BodyHTML  string
+				BaseRefName, HeadRefName           string
+				ReviewDecision                     string
+				IsDraft                            bool
+				Additions, Deletions, ChangedFiles int
+				Author                             struct{ Login string }
+				Labels                             struct{ Nodes []struct{ Name string } }
+				ClosingIssuesReferences            struct{ Nodes []struct{ Number int } }
+				Comments                           page
+				Reviews                            struct{ Nodes []post }
+			}
+		}
+	}
+	if err := r.GH.GraphQL(
+		c.Context,
+		`query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){number title state isDraft url body bodyHTML baseRefName headRefName additions deletions changedFiles reviewDecision author{login} labels(first:20){nodes{name}} closingIssuesReferences(first:10){nodes{number}} comments(first:100){pageInfo{hasNextPage endCursor} nodes{`+postFields+`}} reviews(first:100){nodes{`+postFields+` state}}}}}`,
+		map[string]any{"owner": r.Config.Owner, "repo": r.Config.Repo, "number": n},
+		&data,
+	); err != nil {
+		return err
+	}
+	v := data.Repository.PullRequest
+	if v == nil {
+		return fmt.Errorf("pull request #%d not found", n)
+	}
+	comments, err := moreComments(c.Context, r, n, v.Comments)
+	if err != nil {
+		return err
+	}
+	posts, err := threads(c.Context, r, n, trailingBool(c, "all"))
+	if err != nil {
+		return err
+	}
+	state := v.State
+	if v.IsDraft {
+		state += " draft"
+	}
+	var ls, closes []string
+	for _, l := range v.Labels.Nodes {
+		ls = append(ls, l.Name)
+	}
+	for _, i := range v.ClosingIssuesReferences.Nodes {
+		closes = append(closes, fmt.Sprintf("#%d", i.Number))
+	}
+	doc := &convo.Doc{
+		Slug:  fmt.Sprintf("pr-%d", n),
+		Title: fmt.Sprintf("#%d %s", v.Number, v.Title),
+		Header: []string{
+			"state: " + state,
+			"author: " + v.Author.Login,
+			fmt.Sprintf("branch: %s <- %s", v.BaseRefName, v.HeadRefName),
+			fmt.Sprintf("diff: +%d -%d in %d files", v.Additions, v.Deletions, v.ChangedFiles),
+			"labels: " + join(ls),
+			"closes: " + join(closes),
+			"review: " + fallback(v.ReviewDecision),
+			v.URL,
+		},
+		Body:  v.Body,
+		HTML:  v.BodyHTML,
+		Posts: posts,
+	}
+	for _, p := range comments {
+		doc.Posts = append(doc.Posts, p.convo("comment"))
+	}
+	for _, p := range v.Reviews.Nodes {
+		if strings.TrimSpace(p.Body) == "" && p.State == "COMMENTED" {
+			continue // an empty review only carries its inline threads
+		}
+		review := p.convo("review")
+		review.Note = p.State
+		doc.Posts = append(doc.Posts, review)
+	}
+	return r.show(c, doc)
 }
 
 func value(p *int) int {
@@ -264,13 +354,6 @@ func value(p *int) int {
 		return 0
 	}
 	return *p
-}
-
-func first(s string, n int) string {
-	if len(s) < n {
-		return s
-	}
-	return s[:n]
 }
 
 func threadShow(c *cli.Context) error {
@@ -431,5 +514,3 @@ func prComment(c *cli.Context) error {
 	}
 	return err
 }
-
-var _ = output.Row{}

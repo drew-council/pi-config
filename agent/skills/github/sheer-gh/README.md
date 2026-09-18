@@ -10,7 +10,7 @@ bin/sheer-gh --help
 ~/.pi/agent/skills/github/sheer-gh/bin/sheer-gh ci latest ci
 ```
 
-Requirements: Go 1.26+ and an authenticated `gh`. `GITHUB_TOKEN` bypasses `gh auth token`. The first `go run` compiles dependencies and is slower.
+Requirements: Go 1.26+ and an authenticated `gh`. `GITHUB_TOKEN` bypasses `gh auth token`. Attachments on Google Cloud Storage are fetched with a `gcloud auth print-access-token` token. The first `go run` compiles dependencies and is slower. Auth and scope failures are reported with the command that fixes them; the docs do not repeat that.
 
 ## Develop
 
@@ -20,4 +20,4 @@ go vet ./...
 golangci-lint run
 ```
 
-`internal/app` defines the urfave CLI and command handlers. Pure parsing and policy live in the other `internal` packages. Add a command by implementing a `*cli.Command` and registering it in `internal/app/app.go`. Keep GitHub writes dry-run aware and use narrow helpers or interfaces for testability.
+`internal/app` defines the urfave CLI and command handlers. `internal/convo` renders an issue, PR, or discussion with its comments as markdown and downloads attachments. Pure parsing and policy live in the other `internal` packages. Add a command by implementing a `*cli.Command` and registering it in `internal/app/app.go`. Keep GitHub writes dry-run aware and use narrow helpers or interfaces for testability.

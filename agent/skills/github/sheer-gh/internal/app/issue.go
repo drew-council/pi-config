@@ -13,7 +13,9 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/drew-council/sheer-gh/internal/body"
+	"github.com/drew-council/sheer-gh/internal/convo"
 	"github.com/drew-council/sheer-gh/internal/forms"
+	ghclient "github.com/drew-council/sheer-gh/internal/gh"
 	"github.com/drew-council/sheer-gh/internal/output"
 	"github.com/drew-council/sheer-gh/internal/refs"
 )
@@ -43,7 +45,7 @@ func issueCommand() *cli.Command {
 			{Name: "type", Action: issueType},
 			{Name: "parent", Action: issueParent},
 			{Name: "subs", Action: issueSubs},
-			{Name: "show", Action: issueShow},
+			{Name: "show", Flags: showFlags(), Action: issueShow},
 		},
 	}
 }
@@ -297,45 +299,51 @@ func issueShow(c *cli.Context) error {
 	}
 	var issue struct {
 		Repository struct {
-			Issue struct {
-				Number            int
-				Title, State, URL string
-				IssueType         *struct{ Name string }
-				Parent            *struct {
+			Issue *struct {
+				Number                            int
+				Title, State, URL, Body, BodyHTML string
+				IssueType                         *struct{ Name string }
+				Parent                            *struct {
 					Number int
 					Title  string
 				}
 				Assignees        struct{ Nodes []struct{ Login string } }
 				Labels           struct{ Nodes []struct{ Name string } }
 				SubIssuesSummary struct{ Total, Completed int }
+				Comments         page
 			}
 		}
 	}
+	var item boardItem
+	var boardErr error
 	g, ctx := errgroup.WithContext(c.Context)
 	g.Go(func() error {
 		return r.GH.GraphQL(
 			ctx,
-			`query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){issue(number:$number){number title state url issueType{name} parent{number title} assignees(first:10){nodes{login}} labels(first:20){nodes{name}} subIssuesSummary{total completed}}}}`,
+			`query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){issue(number:$number){number title state url body bodyHTML issueType{name} parent{number title} assignees(first:10){nodes{login}} labels(first:20){nodes{name}} subIssuesSummary{total completed} comments(first:100){pageInfo{hasNextPage endCursor} nodes{`+postFields+`}}}}}`,
 			map[string]any{"owner": r.Config.Owner, "repo": r.Config.Repo, "number": n},
 			&issue,
 		)
 	})
-	var item boardItem
-	g.Go(func() error { var e error; item, e = getBoardItem(ctx, r, n); return e })
+	// Board fields need the read:project scope; show the issue without them if that fails.
+	g.Go(func() error { item, boardErr = getBoardItem(ctx, r, n); return nil })
 	if err := g.Wait(); err != nil {
 		return err
 	}
 	v := issue.Repository.Issue
-	fmt.Fprintf(r.Out, "#%d %s\n  state: %s\n", v.Number, v.Title, v.State)
+	if v == nil {
+		return fmt.Errorf("issue #%d not found", n)
+	}
+	comments, err := moreComments(c.Context, r, n, v.Comments)
+	if err != nil {
+		return err
+	}
+	typ, parent := "-", "-"
 	if v.IssueType != nil {
-		fmt.Fprintf(r.Out, "  type: %s\n", v.IssueType.Name)
-	} else {
-		fmt.Fprintln(r.Out, "  type: -")
+		typ = v.IssueType.Name
 	}
 	if v.Parent != nil {
-		fmt.Fprintf(r.Out, "  parent: #%d %s\n", v.Parent.Number, v.Parent.Title)
-	} else {
-		fmt.Fprintln(r.Out, "  parent: -")
+		parent = fmt.Sprintf("#%d %s", v.Parent.Number, v.Parent.Title)
 	}
 	var us, ls []string
 	for _, u := range v.Assignees.Nodes {
@@ -344,17 +352,34 @@ func issueShow(c *cli.Context) error {
 	for _, l := range v.Labels.Nodes {
 		ls = append(ls, l.Name)
 	}
-	fmt.Fprintf(
-		r.Out,
-		"  assignees: %s\n  labels: %s\n  sub-issues: %d/%d\n  %s\n",
-		join(us),
-		join(ls),
-		v.SubIssuesSummary.Completed,
-		v.SubIssuesSummary.Total,
-		v.URL,
-	)
-	printBoardItem(r, item, "  ")
-	return nil
+	doc := &convo.Doc{
+		Slug:  fmt.Sprintf("issue-%d", n),
+		Title: fmt.Sprintf("#%d %s", v.Number, v.Title),
+		Header: []string{
+			"state: " + v.State,
+			"type: " + typ,
+			"parent: " + parent,
+			"assignees: " + join(us),
+			"labels: " + join(ls),
+			fmt.Sprintf(
+				"sub-issues: %d/%d",
+				v.SubIssuesSummary.Completed,
+				v.SubIssuesSummary.Total,
+			),
+		},
+		Body: v.Body,
+		HTML: v.BodyHTML,
+	}
+	if boardErr != nil {
+		doc.Header = append(doc.Header, "board: unavailable: "+ghclient.Hint(boardErr).Error())
+	} else {
+		doc.Header = append(doc.Header, boardLines(item)...)
+	}
+	doc.Header = append(doc.Header, v.URL)
+	for _, p := range comments {
+		doc.Posts = append(doc.Posts, p.convo("comment"))
+	}
+	return r.show(c, doc)
 }
 
 func issueNew(c *cli.Context) error {

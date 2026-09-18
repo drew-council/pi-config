@@ -21,9 +21,11 @@ Use a discussion when the outcome is not yet decided or the point is to collect 
 sheer-gh discussion categories
 sheer-gh discussion list --category Specs --limit 20
 sheer-gh discussion search agentic BVR --category Specs    # full-text over title and body
-sheer-gh discussion show 28137                             # body and comments as markdown
+sheer-gh discussion show 28137                             # body, comments, and replies as markdown
 sheer-gh discussion show 28137 --no-comments
 sheer-gh discussion new --category Specs --title "..." --body-file spec.md
 ```
+
+`show` downloads attachments to `$TMPDIR/sheer-gh/discussion-<n>/` and points the printed links at the local files.
 
 The API does not apply a category's template, so for a spec copy `spec-template.md`, drop the source comment at the top, fill every section, and delete the note blocks. Creating a discussion is visible to the whole team, so confirm with the user first.

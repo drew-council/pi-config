@@ -102,7 +102,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	app := New()
 	app.Writer = stdout
 	app.ErrWriter = stderr
-	err := app.Run(args)
+	err := ghclient.Hint(app.Run(args))
 	if err == nil {
 		return 0
 	}

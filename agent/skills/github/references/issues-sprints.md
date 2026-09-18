@@ -53,7 +53,9 @@ Write the problem, not the implementation. A bug report says what was observed a
 ## Reading an issue
 
 ```sh
-gh issue view 28136 --comments       # body and conversation
-sheer-gh issue show 28136                  # type, parent, labels, assignees, board fields
+sheer-gh issue show 28136                  # metadata, board fields, body, and comments as markdown
+sheer-gh issue show 28136 --no-comments
 sheer-gh issue subs 26835                  # sub-issues of an epic with state
 ```
+
+`show` downloads attachments (GitHub uploads and `console.cloud.google.com`, `storage.cloud.google.com`, or `storage.googleapis.com` links) into `$TMPDIR/sheer-gh/issue-<n>/`, rewrites the links in the printed markdown to those paths, and saves the markdown there too. Read the image files to see the screenshots. `--no-attachments` skips the downloads.

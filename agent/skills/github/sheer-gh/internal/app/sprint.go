@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -217,15 +218,20 @@ func sprintCurrent(c *cli.Context) error {
 	return rt(c).rows(output.R("title", it.Title, "id", it.ID, "start", "starts "+it.StartDate))
 }
 
-func printBoardItem(r *Runtime, item boardItem, prefix string) {
+func boardLines(item boardItem) []string {
 	if item.ItemID == "" {
-		fmt.Fprintf(r.Out, "%sis not on the board\n", prefix)
-		return
+		return []string{"board: not on the board"}
 	}
-	fmt.Fprintf(r.Out, "%sitem=%s\n", prefix, item.ItemID)
-	for k, v := range item.Fields {
-		fmt.Fprintf(r.Out, "%s%s: %s\n", prefix, k, v)
+	keys := make([]string, 0, len(item.Fields))
+	for k := range item.Fields {
+		keys = append(keys, k)
 	}
+	sort.Strings(keys)
+	lines := []string{"board item: " + item.ItemID}
+	for _, k := range keys {
+		lines = append(lines, k+": "+item.Fields[k])
+	}
+	return lines
 }
 
 func sprintShow(c *cli.Context) error {
@@ -238,8 +244,7 @@ func sprintShow(c *cli.Context) error {
 	}
 	item, err := getBoardItem(c.Context, rt(c), n)
 	if err == nil {
-		fmt.Fprintf(rt(c).Out, "#%d  ", n)
-		printBoardItem(rt(c), item, "")
+		fmt.Fprintf(rt(c).Out, "#%d\n%s\n", n, strings.Join(boardLines(item), "\n"))
 	}
 	return err
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"github.com/drew-council/sheer-gh/internal/body"
+	"github.com/drew-council/sheer-gh/internal/convo"
 	"github.com/drew-council/sheer-gh/internal/output"
 	"github.com/drew-council/sheer-gh/internal/refs"
 )
@@ -60,11 +61,7 @@ func discussionCommand() *cli.Command {
 				Flags:  []cli.Flag{&cli.StringFlag{Name: "category"}},
 				Action: discussionSearch,
 			},
-			{
-				Name:   "show",
-				Flags:  []cli.Flag{&cli.BoolFlag{Name: "no-comments"}},
-				Action: discussionShow,
-			},
+			{Name: "show", Flags: showFlags(), Action: discussionShow},
 			{
 				Name: "new",
 				Flags: []cli.Flag{
@@ -221,63 +218,47 @@ func discussionShow(c *cli.Context) error {
 	}
 	var d struct {
 		Repository struct {
-			Discussion struct {
-				Title, URL, CreatedAt, Body string
-				Author                      struct{ Login string }
-				Category                    struct{ Name string }
-				Comments                    struct {
-					Nodes []struct {
-						Body, CreatedAt string
-						Author          struct{ Login string }
-						Replies         struct {
-							Nodes []struct {
-								Body, CreatedAt string
-								Author          struct{ Login string }
-							}
-						}
-					}
-				}
+			Discussion *struct {
+				Title, URL, CreatedAt, Body, BodyHTML string
+				Author                                struct{ Login string }
+				Category                              struct{ Name string }
+				Comments                              struct{ Nodes []post }
 			}
 		}
 	}
 	if err = r.GH.GraphQL(
 		c.Context,
-		`query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){discussion(number:$number){title url createdAt author{login} category{name} body comments(first:50){nodes{author{login} createdAt body replies(first:30){nodes{author{login} createdAt body}}}}}}}`,
+		`query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){discussion(number:$number){title url createdAt author{login} category{name} body bodyHTML comments(first:100){nodes{`+postFields+` replies(first:100){nodes{`+postFields+`}}}}}}}`,
 		map[string]any{"owner": r.Config.Owner, "repo": r.Config.Repo, "number": n},
 		&d,
 	); err != nil {
 		return err
 	}
 	v := d.Repository.Discussion
-	fmt.Fprintf(
-		r.Out,
-		"# %s\n\n[%s] @%s %s  %s\n\n%s\n",
-		v.Title,
-		v.Category.Name,
-		v.Author.Login,
-		first(v.CreatedAt, 10),
-		v.URL,
-		v.Body,
-	)
-	if trailingBool(c, "no-comments") {
-		return nil
+	if v == nil {
+		return fmt.Errorf("discussion #%d not found", n)
 	}
-	for _, x := range v.Comments.Nodes {
-		fmt.Fprintf(
-			r.Out,
-			"\n---\n\n## @%s %s\n\n%s\n",
-			x.Author.Login,
-			first(x.CreatedAt, 10),
-			x.Body,
-		)
-		for _, reply := range x.Replies.Nodes {
-			fmt.Fprintf(r.Out, "\n> **@%s %s**\n", reply.Author.Login, first(reply.CreatedAt, 10))
-			for _, line := range strings.Split(reply.Body, "\n") {
-				fmt.Fprintf(r.Out, "> %s\n", line)
-			}
-		}
+	doc := &convo.Doc{
+		Slug:  fmt.Sprintf("discussion-%d", n),
+		Title: fmt.Sprintf("#%d %s", n, v.Title),
+		Header: []string{
+			fmt.Sprintf("[%s] @%s %s", v.Category.Name, v.Author.Login, first(v.CreatedAt, 10)),
+			v.URL,
+		},
+		Body: v.Body,
+		HTML: v.BodyHTML,
 	}
-	return nil
+	for _, p := range v.Comments.Nodes {
+		doc.Posts = append(doc.Posts, p.convo("comment"))
+	}
+	return r.show(c, doc)
+}
+
+func first(s string, n int) string {
+	if len(s) < n {
+		return s
+	}
+	return s[:n]
 }
 
 func discussionNew(c *cli.Context) error {

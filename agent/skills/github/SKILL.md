@@ -7,17 +7,15 @@ description: Work with the sheerhealth/sheer GitHub repo, covering pull requests
 
 `sheer-gh` is the primary interface to GitHub. **Use it whenever it supports the operation, including read-only discovery.** Use raw `gh` only for unsupported operations, then return to `sheer-gh`.
 
-## Setup and invocation
+## Invocation
 
-Requires Go 1.26+ and an authenticated `gh`. The first run compiles dependencies and may take several seconds.
-
-`sheer-gh` is on `PATH` in agent bash calls. Invoke it directly:
+`sheer-gh` is on `PATH` in agent bash calls. Invoke it directly; the first run compiles and may take several seconds.
 
 ```sh
 sheer-gh ci latest ci
 ```
 
-Read the relevant reference and `sheer-gh <group> --help` before acting.
+Read the relevant reference and `sheer-gh <group> --help` before acting. Errors that need a fix on the machine, such as a missing token or scope, say so and name the command to run.
 
 | Need | Reference | Group |
 | --- | --- | --- |
@@ -36,5 +34,5 @@ Stacked PRs use the separate gh-stack skill.
 - Agent-written comments carry the CLI's attribution line unless explicitly disabled.
 - Follow repository templates. The CLI fetches them from GitHub's default branch.
 - Link every PR to an issue with a closing keyword. CI rejects PRs over 50 changed lines without an issue unless labeled `debt`.
-- Board writes need the `project` token scope. On failure run `gh auth refresh -s project`.
+- `issue show`, `pr show`, and `discussion show` print the body and every comment as markdown, download attachments (GitHub uploads and Google Cloud Storage links) to a temp directory, and print the local paths. Read image files from there to see screenshots.
 - `--dry-run` previews mutations. `--json` switches structured row output to JSON.
