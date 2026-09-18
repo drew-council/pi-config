@@ -412,9 +412,13 @@ func issueNew(c *cli.Context) error {
 		return nil
 	}
 	req := &github.IssueRequest{
-		Title:  github.String(c.String("title")),
-		Body:   github.String(text),
-		Labels: &labels,
+		Title: github.String(c.String("title")),
+		Body:  github.String(text),
+	}
+	// A nil slice serializes as `"labels": null`, which GitHub rejects with
+	// "nil is not an array". Forms without labels (chore) hit this path.
+	if len(labels) > 0 {
+		req.Labels = &labels
 	}
 	if a := c.String("assignee"); a != "" {
 		if a == "@me" {
