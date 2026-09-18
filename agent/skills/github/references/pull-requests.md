@@ -6,6 +6,8 @@ Open PRs as drafts. CODEOWNERS assigns the readability team for each file type (
 
 Start from `.github/pull_request_template.md`. Its HTML comments say what each section is for; fill the sections and delete the comments. `sheer-gh pr template` prints it and `sheer-gh pr recent 3` shows how recent merged PRs read.
 
+Never include both a link and its bare number for a PR or issue (as in `https://github.com/sheerhealth/sheer/pull/28335` and `#28335` for the same thing). GitHub renders the two identically, so the duplication reads as noise.
+
 Beyond the template: say what the change does, not the work process, the previous attempt, or what is left out. Most merged PR bodies are under 200 words, and over 300 is rare. No em dashes, no generated-with trailer. The title is a short imperative sentence starting with a capital letter, optionally prefixed with the area as in `agentv2: scope AgentSession to an Account`.
 
 ```sh
