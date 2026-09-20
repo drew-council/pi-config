@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "0.86.0",
   "defaultProvider": "claude-bridge",
-  "defaultModel": "claude-fable-5.1",
+  "defaultModel": "claude-fable-5-1",
   "extensions": [],
   "npmCommand": [
     "bun"
@@ -14,10 +14,10 @@
       "skills": [],
       "prompts": []
     },
-    "npm:pi-claude-bridge",
     "npm:pi-multi-skills",
     "npm:@bizmyth/pi-review",
-    "npm:@bizmyth/pi-git-conflicts"
+    "npm:@bizmyth/pi-git-conflicts",
+    "git:github.com/elidickinson/pi-claude-bridge@10da8502332f6630787668559eb8922186a5004f"
   ],
   "theme": "catppuccin-mocha",
   "hideThinkingBlock": true,
