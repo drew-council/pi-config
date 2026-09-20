@@ -13,32 +13,37 @@ paths changed to `../src/...`:
 | `neovim-editor-history.test.ts` | rewritten in task 03 as in-memory only, move as is |
 | `neovim-editor-input-events.test.ts` | pure unit test, move as is |
 | `neovim-editor-layout.test.ts` | pure unit test, move as is |
-| `neovim-editor-debug-key.test.ts` | created in task 04, if task 02 kept the handler |
 | `neovim-host.integration.test.ts` | spawns real `nvim --clean --embed`, see below |
 | new effective-keybindings test from task 01 | move as is |
 
 ## Do not move
 
-- The personal keybindings assertion split out in task 04. It reads
+- `local-keybindings.test.ts` (renamed in task 04). It reads
   `agent/keybindings.json` from this repo.
 
-## Integration test in CI
+## Integration tests hard-depend on Neovim
 
-`neovim-host.integration.test.ts` returns early when `Bun.which("nvim")` is
-falsy, so it silently passes on a runner without Neovim. That hides
-regressions. In the new repo's `ci.yml`, install Neovim before running checks
-so the integration tests actually execute:
+`neovim-host.integration.test.ts` currently returns early from every test
+when `Bun.which("nvim")` is falsy, so it silently passes wherever Neovim is
+missing. Remove that soft skip entirely. Neovim is a hard requirement of the
+package, so it is a hard requirement of its test suite: a missing binary must
+fail the run, on CI and locally alike.
 
-```yaml
-- uses: rhysd/action-setup-vim@v1
-  with:
-    neovim: true
-    version: stable
-```
+1. Delete the `if (!Bun.which("nvim")) return;` line from each integration
+   test. Let `NeovimHost.start()` surface its own "Neovim 0.10 or newer was
+   not found on PATH" error, which fails the test.
+2. Install Neovim on the runner in both `ci.yml` and `publish.yml`, before
+   `bun run check`:
 
-Then change the early return in each integration test to a hard failure when
-`process.env.CI` is set, so a broken Neovim install on CI cannot be mistaken
-for a pass.
+   ```yaml
+   - uses: rhysd/action-setup-vim@v1
+     with:
+       neovim: true
+       version: stable
+   ```
+
+3. State the requirement in the README's Development section: `bun test`
+   needs `nvim` on `PATH`.
 
 The tests already use `--clean`, so they are independent of any user config.
 
@@ -50,3 +55,5 @@ The tests already use `--clean`, so they are independent of any user config.
   remaining.
 - CI on the first push runs the integration tests, visible in the job log as
   non-trivial durations (they take 50 to 300 ms each with a real Neovim).
+- Temporarily run `PATH=/usr/bin bun test` (or otherwise hide `nvim`) and
+  confirm the five integration tests fail rather than pass.

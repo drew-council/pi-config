@@ -1,42 +1,34 @@
-# 04 – Split the keybindings test into portable and personal parts
+# 04 – Keep the personal keybindings test local
 
 Not blocking. Do this before task 06 so the move is mechanical.
 
 ## Problem
 
-`agent/tests/extensions/neovim-editor-keybindings.test.ts` contains two kinds
-of tests:
-
-- One that reads `agent/keybindings.json` from this repo and asserts the
-  personal chords (`app.exit` is `ctrl+shift+d`, `app.clipboard.pasteImage` is
-  `ctrl+v`). This is a guard against accidentally breaking the local setup and
-  belongs in this repo only.
-- Two that exercise `releaseGlobalDebugHandler` in isolation. These are
-  portable and belong with the extension.
-
-If task 02 chose Option B (remove the debug handler), the portable tests go
-away and only the personal one remains.
+`agent/tests/extensions/neovim-editor-keybindings.test.ts` reads
+`agent/keybindings.json` from this repo and asserts personal chords. It is a
+guard against accidentally breaking the local setup and cannot move to the
+new package. After task 02 removes the debug-handler tests, that is all the
+file contains, but its `neovim-` prefix means task 06 would sweep it up.
 
 ## Changes
 
-1. Move the `releaseGlobalDebugHandler` tests into a new file, for example
-   `neovim-editor-debug-key.test.ts`, alongside the other portable
-   extension tests.
-2. Leave the `keybindings.json` assertion where it is, but rename the file to
-   make its scope obvious, for example `local-keybindings.test.ts`, and drop
-   the `neovim-` prefix so it is not swept up by the move in task 06.
-3. Extend the personal test to assert whichever bindings the Neovim editor
-   depends on for the local workflow (submit on `ctrl+enter`), since after
-   task 01 those are no longer the only way the editor works but are still
-   the way this machine is configured. Do not assert the history chords;
-   `ctrl+up`/`ctrl+down` now belong to the `history` extension's shortcuts.
+1. Rename the file to `local-keybindings.test.ts` so it is obviously
+   repo-specific and does not match the move in task 06.
+2. Assert the bindings the local workflow depends on now that task 01 makes
+   the editor work under Pi defaults too:
+   - `tui.input.submit` is `ctrl+enter` (Enter falls through to Neovim).
+   - `app.interrupt` is `ctrl+c`.
+   - `app.exit` is an empty list (no chord; `:q` exits).
+   - `app.clipboard.pasteImage` is `ctrl+v`.
+   Do not assert the history chords; `ctrl+up`/`ctrl+down` belong to the
+   `history` extension's shortcuts.
 
 ## Verification
 
 - `./scripts/check.nu` passes.
 - `bun test ./agent/tests/extensions` shows the same total test count before
-  and after the split.
+  and after the rename.
 
 ## Files
 
-- `agent/tests/extensions/neovim-editor-keybindings.test.ts` (split)
+- `agent/tests/extensions/neovim-editor-keybindings.test.ts` (rename)

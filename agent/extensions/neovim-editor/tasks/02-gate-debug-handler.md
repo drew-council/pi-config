@@ -1,4 +1,4 @@
-# 02 – Gate the debug-handler release on an actual binding
+# 02 – Drop the debug-handler release
 
 **Blocking for factor-out.**
 
@@ -13,34 +13,34 @@ chord through.
 For any other user this silently removes Pi's debug command for as long as the
 editor is mounted. It exists only because of one personal keybinding.
 
+## Decision
+
+Remove it. `:q` from Neovim already exits Pi and is the preferred way
+locally, so no exit chord is needed at all.
+
 ## Changes
 
-Pick one:
-
-**Option A (preferred): gate it.** In the `NeovimEditor` constructor, only
-release the handler when some resolved Pi binding actually uses
-`shift+ctrl+d`. After task 01 the editor has an effective-bindings lookup;
-iterate the actions it handles and check whether any resolved key matches that
-chord. If none do, leave `tui.onDebug` alone and skip the restore on dispose.
-
-**Option B: drop it.** Remove `debug-key.ts`, its two call sites, and its
-tests, then rebind `app.exit` locally to something Pi does not reserve. This
-loses nothing for other users but changes a local habit.
-
-Either way, update the comment in the constructor so it no longer reads as if
-the release is a general requirement.
+1. Delete `debug-key.ts`.
+2. In `editor.ts` remove the `restoreDebugHandler` field, the constructor
+   call, the `dispose` call, and the comment explaining the release.
+3. In `agent/keybindings.json` set `"app.exit": []`. Deleting the line would
+   restore Pi's default `ctrl+d`, which is a Neovim key. An empty list keeps
+   exit unbound; `:q` remains the exit path.
+4. Remove the two `releaseGlobalDebugHandler` tests from
+   `agent/tests/extensions/neovim-editor-keybindings.test.ts` and update the
+   `app.exit` assertion there to expect an empty list (task 04 handles the
+   rest of that file).
 
 ## Verification
 
-- Existing tests in `neovim-editor-keybindings.test.ts` for
-  `releaseGlobalDebugHandler` still pass if Option A is chosen.
-- Add a test: with an empty user config, constructing the editor leaves
-  `tui.onDebug` untouched. With `app.exit` bound to `ctrl+shift+d`, it is
-  released and restored on dispose.
-- Manually confirm Ctrl+Shift+D still exits Pi with the local keybindings.
+- `./scripts/check.nu` passes.
+- Start Pi with the Neovim editor, press Ctrl+Shift+D, confirm Pi's debug
+  command runs. Type `:q`, confirm Pi exits.
+- `git grep -n onDebug agent/extensions/neovim-editor` returns nothing.
 
 ## Files
 
-- `editor.ts` (constructor, `dispose`)
-- `debug-key.ts`
+- `editor.ts`
+- `debug-key.ts` (delete)
+- `agent/keybindings.json`
 - `agent/tests/extensions/neovim-editor-keybindings.test.ts`

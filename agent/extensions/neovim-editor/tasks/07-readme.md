@@ -26,14 +26,16 @@ structure, reusing the existing content where it fits.
 
 4. **Keys: what Pi keeps and what Neovim gets.** This is the section the
    current README lacks and the one most likely to confuse people. Cover:
-   - Pi claims the keys bound to submit, exit (only when the prompt is empty),
-     interrupt, history navigation, image paste, tab-completion, and any other
-     Pi app action. Everything else goes to Neovim.
-   - Escape always goes to Neovim, even if Pi binds interrupt to it.
-   - With Pi's default keybindings, Enter submits and Shift+Enter inserts a
-     newline. Users who prefer Enter-as-newline should bind `tui.input.submit`
-     to `ctrl+enter` in their Pi keybindings file, which makes Enter fall
-     through to Neovim. Show the JSON snippet.
+   - The rule: any key that resolves to a Pi action goes to Pi, everything
+     else goes to Neovim. Same as Pi's built-in editor, same keybindings file.
+   - The one exception is Escape. In plain normal mode it goes to Pi (interrupt
+     under defaults); in every other mode it goes to Neovim. Under defaults,
+     press Escape twice from insert mode to interrupt the agent.
+   - Under Pi's defaults: Enter submits, Shift+Enter inserts a newline, Ctrl+C
+     clears the editor, Ctrl+D exits on an empty prompt. Users who prefer
+     Enter-as-newline bind `tui.input.submit` to `ctrl+enter`, which makes
+     Enter fall through to Neovim. Users who want Ctrl+C in Neovim rebind
+     `app.clear`. Show the JSON snippet for both.
    - `:PiSubmit` always submits from command-line mode.
    - `:q` in Neovim exits Pi. It does not restart the embedded instance.
 
@@ -43,8 +45,6 @@ structure, reusing the existing content where it fits.
    buffer is current again, and submission always reads the prompt buffer.
 
 6. **Extras.**
-   - `:pb [lang]` wraps the system clipboard in a fenced code block below the
-     cursor. Explain that `:pb` is a command-line abbreviation for `:Pb`.
    - Mode badge in the lower border, reflecting the true Neovim mode.
    - Neovim messages and errors surface as Pi notifications because the grid
      is too short to show them natively.

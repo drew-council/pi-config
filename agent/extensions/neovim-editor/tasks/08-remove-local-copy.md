@@ -23,11 +23,10 @@ one machine. Follow the pattern of the earlier factor-outs (`7cee1de` for
    bun install --cwd agent
    ```
 
-5. **Install script.** In `scripts/install.nu`:
-   - Remove the `@msgpack/msgpack` entry from `required_local_packages`.
-   - Remove `nvim` from `required_commands`. This repo is used on multiple
-     machines and no longer has a hard dependency on Neovim; the extension
-     reports its own missing-binary error at runtime.
+5. **Install script.** In `scripts/install.nu`, remove the
+   `@msgpack/msgpack` entry from `required_local_packages`. Keep `nvim` in
+   `required_commands`: every machine this config lands on has Neovim and
+   uses the editor, so failing early is the right behaviour.
 
 6. **Plans.** Remove the `neovim-editor` line from the factor-out list in
    `future-plans.md`.
@@ -35,8 +34,7 @@ one machine. Follow the pattern of the earlier factor-outs (`7cee1de` for
 ## Verification
 
 - `./scripts/check.nu` passes.
-- `./scripts/install.nu` passes on a machine without `nvim` installed, or at
-  least does not fail on the removed checks.
+- `./scripts/install.nu` passes and no longer checks for `@msgpack/msgpack`.
 - Start Pi, confirm the Neovim editor mounts from the npm package, type and
   submit a prompt, run `/reload`, confirm it comes back.
 - `git grep -n neovim-editor` in this repo returns nothing.
