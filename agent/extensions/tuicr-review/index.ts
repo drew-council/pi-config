@@ -156,9 +156,21 @@ export default function tuicrReviewExtension(pi: ExtensionAPI) {
     ctx.ui.setStatus(STATUS_ID, remaining > 0 ? ctx.ui.theme.fg("accent", `tuicr:${remaining}`) : undefined);
   };
 
+  const remainingComments = (): TuicrComment[] => {
+    if (!state) return [];
+    const addressed = new Set(state.addressedIds);
+    return state.review.comments.filter((comment) => !addressed.has(comment.id));
+  };
+
+  const clearReview = (ctx: ExtensionContext) => {
+    state = undefined;
+    pi.appendEntry(STATE_ENTRY_TYPE, undefined);
+    updateStatus(ctx);
+  };
+
   const runRound = async (ctx: ExtensionCommandContext) => {
     if (!state) {
-      ctx.ui.notify("No active tuicr review. Run /tuicr parse first.", "warning");
+      ctx.ui.notify("No active tuicr review.", "warning");
       return;
     }
     if (!ctx.isIdle()) {
@@ -166,8 +178,7 @@ export default function tuicrReviewExtension(pi: ExtensionAPI) {
       return;
     }
 
-    const addressed = new Set(state.addressedIds);
-    const remaining = state.review.comments.filter((comment) => !addressed.has(comment.id));
+    const remaining = remainingComments();
     if (remaining.length === 0) {
       updateStatus(ctx);
       ctx.ui.notify("All comments in the active tuicr review have been addressed.", "info");
@@ -227,13 +238,23 @@ export default function tuicrReviewExtension(pi: ExtensionAPI) {
     }
   };
 
+  const runDefault = async (ctx: ExtensionCommandContext) => {
+    if (remainingComments().length > 0) {
+      await runRound(ctx);
+      return;
+    }
+
+    await parseReview("", ctx);
+  };
+
   pi.registerCommand("tuicr", {
-    description: "Parse a tuicr review or resume selecting comments from the active review",
+    description: "Parse a tuicr review from the clipboard or resume the active review",
     getArgumentCompletions: (prefix) => {
       if (/\s/.test(prefix)) return null;
       const subcommands = [
         { value: "parse", label: "parse", description: "Parse a review from a file or the system clipboard" },
         { value: "resume", label: "resume", description: "Select more unaddressed comments" },
+        { value: "clear", label: "clear", description: "Discard the queued review comments" },
       ];
       const matches = subcommands.filter((item) => item.value.startsWith(prefix));
       return matches.length > 0 ? matches : null;
@@ -243,6 +264,10 @@ export default function tuicrReviewExtension(pi: ExtensionAPI) {
       const subcommand = match?.[1]?.toLowerCase();
       const argument = match?.[2] ?? "";
 
+      if (!subcommand) {
+        await runDefault(ctx);
+        return;
+      }
       if (subcommand === "parse") {
         await parseReview(argument, ctx);
         return;
@@ -251,8 +276,14 @@ export default function tuicrReviewExtension(pi: ExtensionAPI) {
         await runRound(ctx);
         return;
       }
+      if (subcommand === "clear" && !argument.trim()) {
+        const hadReview = state !== undefined;
+        clearReview(ctx);
+        ctx.ui.notify(hadReview ? "Cleared the queued tuicr review." : "No queued tuicr review to clear.", "info");
+        return;
+      }
 
-      ctx.ui.notify("Usage: /tuicr <parse [review-file]|resume>", "warning");
+      ctx.ui.notify("Usage: /tuicr [parse [review-file]|resume|clear]", "warning");
     },
   });
 
