@@ -45,6 +45,7 @@ test("a real embedded Neovim owns editing, state synchronization, and shutdown",
     expect(latestDisplayHeight).toBe(1);
     await waitFor(() => host.grid.cursorShape === "vertical");
     expect(host.mode).toBe("insert");
+    expect(host.isPlainNormal).toBe(false);
 
     host.resize(12, 8);
     await waitFor(() => host.grid.size.width === 12);
@@ -65,9 +66,11 @@ test("a real embedded Neovim owns editing, state synchronization, and shutdown",
 
     host.sendKeys(":");
     await waitFor(() => host.mode.startsWith("cmdline"));
+    expect(host.isPlainNormal).toBe(false);
     expect(host.grid.render(false).join("\n")).toContain(":");
     host.sendKeys("<Esc>");
     await waitFor(() => host.mode === "normal");
+    expect(host.isPlainNormal).toBe(true);
 
     host.sendKeys(":echoerr 'Pi message test'<CR>");
     await waitFor(() => messages.some(({ text }) => text.includes("Pi message test")));
@@ -81,6 +84,7 @@ test("a real embedded Neovim owns editing, state synchronization, and shutdown",
     await host.setState(["test 1234 hello"], 0, 0);
     host.sendKeys("v");
     await waitFor(() => host.mode === "visual" && host.grid.cursorShape === "block");
+    expect(host.isPlainNormal).toBe(false);
     expect(host.grid.cursorShape).toBe("block");
     const visualFrame = host.grid.version;
     host.sendKeys("w");
@@ -88,6 +92,7 @@ test("a real embedded Neovim owns editing, state synchronization, and shutdown",
     expect(stripAnsi(host.grid.render(false)[0])).toContain("test 1234 hello");
     host.sendKeys("<Esc>");
     await waitFor(() => host.mode === "normal");
+    expect(host.isPlainNormal).toBe(true);
 
     // Real replace mode must be reported as such (distinct from Neovim's
     // cursor-obscured "replace" redraw hint, which must never flip the label).

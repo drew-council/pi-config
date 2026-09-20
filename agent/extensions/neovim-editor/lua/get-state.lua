@@ -47,8 +47,12 @@ local function mode_family()
   return "normal"
 end
 
+local mode_info = vim.api.nvim_get_mode()
+local raw_mode = mode_info.mode
+local is_plain_normal = raw_mode == "n" and (vim.v.count == 0) and not mode_info.blocking and vim.fn.state("m") == ""
+
 local lines = vim.api.nvim_buf_get_lines(buffer, 0, -1, false)
 local active = vim.api.nvim_get_current_buf() == buffer
 local cursor = active and vim.api.nvim_win_get_cursor(0) or { 1, 0 }
 local display_height = vim.api.nvim_win_text_height(0, {}).all
-return { lines, cursor[1] - 1, cursor[2], active, display_height, mode_family() }
+return { lines, cursor[1] - 1, cursor[2], active, display_height, mode_family(), is_plain_normal }

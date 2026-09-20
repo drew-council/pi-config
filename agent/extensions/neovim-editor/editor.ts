@@ -3,8 +3,6 @@ import {
   type AutocompleteProvider,
   type EditorComponent,
   type EditorTheme,
-  type KeyId,
-  matchesKey,
   type TUI,
   visibleWidth,
 } from "@earendil-works/pi-tui";
@@ -15,15 +13,13 @@ import { NeovimInputParser, toNeovimInput } from "./input";
 import { neovimGridHeight } from "./layout";
 import { modeLabel } from "./mode";
 import { type NeovimEditorState, NeovimHost } from "./nvim-host";
+import { decideAutocompleteKey, decideKeyRouting } from "./routing";
 
 interface NeovimEditorOptions {
   cwd: string;
   notify: (message: string, level: "info" | "error") => void;
   colorizeMode?: (mode: string, label: string) => string;
 }
-
-const normalizeKeys = (value: KeyId | KeyId[] | undefined): KeyId[] =>
-  value === undefined ? [] : Array.isArray(value) ? value : [value];
 
 export class NeovimEditor implements EditorComponent {
   focused = false;
@@ -267,83 +263,61 @@ export class NeovimEditor implements EditorComponent {
 
   private routeKeys(data: string): void {
     if (this.autocomplete.active) {
-      if (this.explicitMatches(data, "tui.select.cancel")) {
-        this.autocomplete.handleSelection("cancel");
-        return;
-      }
-      if (this.explicitMatches(data, "tui.select.up")) {
-        this.autocomplete.handleSelection("up");
-        return;
-      }
-      if (this.explicitMatches(data, "tui.select.down")) {
-        this.autocomplete.handleSelection("down");
-        return;
-      }
-      if (this.explicitMatches(data, "tui.select.pageUp")) {
-        this.autocomplete.handleSelection("pageUp");
-        return;
-      }
-      if (this.explicitMatches(data, "tui.select.pageDown")) {
-        this.autocomplete.handleSelection("pageDown");
-        return;
-      }
-      if (this.explicitMatches(data, "tui.input.tab")) {
-        this.autocomplete.handleSelection("tab");
-        return;
-      }
-      if (this.explicitMatches(data, "tui.select.confirm")) {
-        this.autocomplete.handleSelection("confirm");
+      const autoAction = decideAutocompleteKey(data, this.keybindings);
+      if (autoAction) {
+        this.autocomplete.handleSelection(autoAction);
         return;
       }
     }
 
     if (this.onExtensionShortcut?.(data)) return;
 
-    if (this.keybindings.matches(data, "app.clipboard.pasteImage")) {
-      this.onPasteImage?.();
-      return;
-    }
-    if (this.explicitMatches(data, "app.interrupt")) {
-      const handler = this.onEscape ?? this.actionHandlers.get("app.interrupt");
-      if (handler) {
-        handler();
+    const decision = decideKeyRouting(data, {
+      keybindings: this.keybindings,
+      autocompleteActive: false,
+      isPlainNormal: this.host.isPlainNormal,
+      isEditorEmpty: this.getText().length === 0,
+      customActionKeys: [...this.actionHandlers.keys()],
+    });
+
+    switch (decision.kind) {
+      case "autocomplete":
+        this.autocomplete.handleSelection(decision.action);
+        return;
+      case "pasteImage":
+        this.onPasteImage?.();
+        return;
+      case "interrupt": {
+        const handler = this.onEscape ?? this.actionHandlers.get("app.interrupt");
+        handler?.();
+        return;
+      }
+      case "exit":
+        this.requestAppExit();
+        return;
+      case "history":
+        this.navigateHistory(decision.direction);
+        return;
+      case "tab":
+        this.autocomplete.triggerExplicit();
+        return;
+      case "newLine":
+        this.host.sendKeys("<CR>");
+        return;
+      case "submit":
+        this.submit();
+        return;
+      case "action": {
+        const handler = this.actionHandlers.get(decision.action);
+        handler?.();
+        return;
+      }
+      case "neovim": {
+        const input = decision.input ?? toNeovimInput(data);
+        if (input) this.host.sendKeys(input);
         return;
       }
     }
-    if (this.explicitMatches(data, "app.exit") && this.getText().length === 0) {
-      if (this.requestAppExit()) return;
-    }
-    if (this.explicitMatches(data, "tui.editor.historyPrevious")) {
-      this.navigateHistory("previous");
-      return;
-    }
-    if (this.explicitMatches(data, "tui.editor.historyNext")) {
-      this.navigateHistory("next");
-      return;
-    }
-    if (this.explicitMatches(data, "tui.input.tab")) {
-      this.autocomplete.triggerExplicit();
-      return;
-    }
-    if (this.explicitMatches(data, "tui.input.submit")) {
-      this.submit();
-      return;
-    }
-
-    for (const [action, handler] of this.actionHandlers) {
-      if (action !== "app.interrupt" && action !== "app.exit" && this.explicitMatches(data, action)) {
-        handler();
-        return;
-      }
-    }
-
-    const input = toNeovimInput(data);
-    if (input) this.host.sendKeys(input);
-  }
-
-  private explicitMatches(data: string, action: string): boolean {
-    const binding = this.keybindings.getUserBindings()[action] as KeyId | KeyId[] | undefined;
-    return normalizeKeys(binding).some((key) => matchesKey(data, key));
   }
 
   private requestAppExit(): boolean {

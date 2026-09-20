@@ -133,6 +133,7 @@ export class NeovimHost {
    * cursor is obscured by an overlay even in insert mode.
    */
   private modeName = "normal";
+  private plainNormal = false;
   private process?: ChildProcessWithoutNullStreams;
   private rpc?: NeovimRpc;
   private state: NeovimEditorState;
@@ -169,6 +170,10 @@ export class NeovimHost {
 
   get mode(): string {
     return this.modeName;
+  }
+
+  get isPlainNormal(): boolean {
+    return this.plainNormal;
   }
 
   get text(): string {
@@ -433,13 +438,14 @@ export class NeovimHost {
   private async syncState(): Promise<void> {
     if (!this.rpc || !this.ready) return;
     try {
-      const result = await this.rpc.request<[string[], number, number, boolean, number, string] | null>(
+      const result = await this.rpc.request<[string[], number, number, boolean, number, string, boolean?] | null>(
         "nvim_exec_lua",
         [GET_STATE_LUA, []],
       );
       if (!result) throw new Error("the [Pi Prompt] buffer no longer exists");
-      const [lines, cursorLine, byteColumn, active, displayHeight, mode] = result;
+      const [lines, cursorLine, byteColumn, active, displayHeight, mode, isPlainNormal] = result;
       if (typeof mode === "string" && mode) this.modeName = mode;
+      this.plainNormal = isPlainNormal === true;
       const normalized = lines.length > 0 ? lines : [""];
       const line = normalized[cursorLine] ?? "";
       this.state = {
