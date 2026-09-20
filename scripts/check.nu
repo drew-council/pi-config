@@ -14,10 +14,10 @@ def main [] {
   let bun_dir = ($repo | path join "bun")
   let typecheck_dir = ($bun_dir | path join "typecheck" "node_modules")
   let biome = ($bun_dir | path join "node_modules" ".bin" "biome")
-  let tsgo = ($bun_dir | path join "node_modules" ".bin" "tsgo")
+  let tsc = ($bun_dir | path join "node_modules" ".bin" "tsc")
 
   assert ($biome | path exists) $"Missing Biome binary: ($biome). Run ./scripts/install.nu first."
-  assert ($tsgo | path exists) $"Missing tsgo binary: ($tsgo). Run ./scripts/install.nu first."
+  assert ($tsc | path exists) $"Missing tsc binary: ($tsc). Run ./scripts/install.nu first."
 
   let typecheck_pi_package = (pi-typecheck-package-path $repo)
   let typecheck_pi_types = ($typecheck_dir | path join "@earendil-works" "pi-coding-agent" "dist" "index.d.ts")
@@ -39,11 +39,11 @@ def main [] {
     say "Running Biome with unsafe fixes"
     ^$biome check --write --unsafe ...$ts_files
 
-    say "Running tsgo"
-    ^$tsgo -p ($repo | path join "tsconfig.json")
+    say "Running tsc (TypeScript 7)"
+    ^$tsc -p ($repo | path join "tsconfig.json")
 
     say "Running Bun unit tests"
-    # Runtime imports must resolve executable JS, not tsgo's declaration-only paths.
+    # Runtime imports must resolve executable JS, not tsc's declaration-only paths.
     ^bun test --tsconfig-override ./tsconfig.runtime.json ./agent/tests
   }
 

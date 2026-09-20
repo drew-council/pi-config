@@ -111,8 +111,8 @@ test("exports an extension factory", () => {
     keywords: ["pi-package" "pi-extension" "pi-coding-agent"]
     files: ["src" "README.md" "LICENSE"]
     scripts: {
-      check: "biome ci . && tsgo -p tsconfig.json && bun test"
-      "check:fix": "biome check --write --unsafe . && tsgo -p tsconfig.json && bun test"
+      check: "biome ci . && tsc -p tsconfig.json && bun test"
+      "check:fix": "biome check --write --unsafe . && tsc -p tsconfig.json && bun test"
       test: "bun test"
       prepublishOnly: "bun run check && npm pack --dry-run"
     }
@@ -265,7 +265,7 @@ bun install
 bun run check
 ```
 
-`bun run check` runs Biome, TypeScript 7 (`tsgo`), and Bun tests.
+`bun run check` runs Biome, TypeScript 7 (`tsc`, the Go-based compiler), and Bun tests.
 
 ## Releasing
 
@@ -290,7 +290,7 @@ MIT
   ^git -C $target init -b main
 
   if not $skip_install {
-    ^bun add --cwd $target --dev @biomejs/biome @types/bun @typescript/native-preview
+    ^bun add --cwd $target --dev @biomejs/biome @types/bun typescript
     ^bun run --cwd $target check:fix
   }
 
