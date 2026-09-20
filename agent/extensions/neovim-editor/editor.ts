@@ -7,7 +7,6 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import { PiAutocompleteController } from "./autocomplete";
-import { releaseGlobalDebugHandler } from "./debug-key";
 import { PromptHistory } from "./history";
 import { NeovimInputParser, toNeovimInput } from "./input";
 import { neovimGridHeight } from "./layout";
@@ -55,7 +54,6 @@ export class NeovimEditor implements EditorComponent {
   private lastNotifiedText = "";
   private preserveHistoryNavigation = false;
   private readonly previousHardwareCursor: boolean;
-  private readonly restoreDebugHandler: () => void;
   private lastCursorShape?: string;
 
   constructor(
@@ -66,9 +64,6 @@ export class NeovimEditor implements EditorComponent {
   ) {
     this.borderColor = theme.borderColor;
     this.previousHardwareCursor = tui.getShowHardwareCursor();
-    // Pi TUI reserves Ctrl+Shift+D for debug logging before focused components
-    // receive input. Release it so the configured app.exit binding can route here.
-    this.restoreDebugHandler = releaseGlobalDebugHandler(tui);
     tui.setShowHardwareCursor(true);
     this.host = this.createHost("");
     this.autocomplete = new PiAutocompleteController({
@@ -353,6 +348,5 @@ export class NeovimEditor implements EditorComponent {
     await this.host.dispose();
     this.tui.terminal.write("\x1b[0 q");
     this.tui.setShowHardwareCursor(this.previousHardwareCursor);
-    this.restoreDebugHandler();
   }
 }

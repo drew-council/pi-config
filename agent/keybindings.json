@@ -1,7 +1,7 @@
 {
   "app.interrupt": "ctrl+c",
   "app.clear": "ctrl+shift+c",
-  "app.exit": "ctrl+shift+d",
+  "app.exit": [],
   "app.suspend": "ctrl+z",
   "app.thinking.cycle": "shift+tab",
   "app.model.cycleForward": "ctrl+p",
