@@ -41,16 +41,26 @@ test("model blacklist removes claude models below major version 5", () => {
   );
 });
 
-test("model blacklist exposes only GLM 5.3 Flash from OpenRouter", () => {
+test("model blacklist exposes only GLM 5.3 (both variants) and DeepSeek 4.1 Flash from OpenRouter", () => {
   const models = [
     { provider: "openrouter", id: "anthropic/claude-opus-4.1" },
     { provider: "openrouter", id: "z-ai/glm-5.3-flash" },
+    { provider: "openrouter", id: "z-ai/glm-5.3" },
+    { provider: "openrouter", id: "deepseek/deepseek-v4.1-flash" },
+    { provider: "openrouter", id: "deepseek/deepseek-v4-flash" },
+    { provider: "openrouter", id: "deepseek/deepseek-chat" },
+    { provider: "openrouter", id: "z-ai/glm-4.6" },
     { provider: "z-ai", id: "glm-5.3-flash" },
   ];
 
   assert.deepEqual(
     _test.filterModels(models).map((model) => `${model.provider}/${model.id}`),
-    ["openrouter/z-ai/glm-5.3-flash", "z-ai/glm-5.3-flash"],
+    [
+      "openrouter/z-ai/glm-5.3-flash",
+      "openrouter/z-ai/glm-5.3",
+      "openrouter/deepseek/deepseek-v4.1-flash",
+      "z-ai/glm-5.3-flash",
+    ],
   );
 });
 
