@@ -7,7 +7,6 @@ factor out into separate extension for potential use by others
 - agent/extensions/git-conflicts.ts
     - needs cleanup, should have directory instead of one big file
     - should be gh-stack compatible
-- agent/extensions/plan
 
 replace with skill+script:
 - agent/extensions/gif-read-support along with agent/extensions/gif-read.ts
