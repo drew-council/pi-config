@@ -6,9 +6,6 @@ factor out into separate extension for potential use by others
     - needs cleanup, should have directory instead of one big file
     - should be gh-stack compatible
 
-replace with skill+script:
-- agent/extensions/transcribe-audio
-
 convert scripts to native pi scripts?
 
 model picking: fzf recent history of model + effort
