@@ -14,7 +14,8 @@
     },
     "npm:pi-claude-bridge",
     "npm:pi-multi-skills",
-    "npm:@bizmyth/pi-review"
+    "npm:@bizmyth/pi-review",
+    "npm:@bizmyth/pi-git-conflicts"
   ],
   "theme": "catppuccin-mocha",
   "hideThinkingBlock": true,
