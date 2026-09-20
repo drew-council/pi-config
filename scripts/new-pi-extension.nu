@@ -9,7 +9,9 @@
 #
 # By default, @scope/pi-example is created at ~/personal/pi-example. Pass
 # --github-repo owner/pi-example to add repository metadata. Also pass
-# --create-github to create and push the public GitHub repository after checks.
+# --create-github to create and push the public GitHub repository after checks,
+# and --publish to perform the first npm publish, configure OIDC trust, and tag
+# the version. npm may open browser 2FA prompts during those one-time operations.
 
 def command-exists [command: string] {
   not ((which $command) | is-empty)
@@ -26,6 +28,7 @@ def main [
   --source: string = "" # Existing extension file or directory to copy into src/.
   --github-repo: string = "" # Add metadata for an owner/repository.
   --create-github # Create and push --github-repo as a public repository.
+  --publish # Publish to npm, then configure GitHub Actions trusted publishing.
   --skip-install # Do not install dependencies or run the generated checks.
 ] {
   if not ($package_name =~ '^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$') {
@@ -40,8 +43,16 @@ def main [
   if $create_github and ($github_repo | is-empty) {
     fail "--create-github requires --github-repo owner/name"
   }
-  if $create_github and not (command-exists "gh") {
-    fail "Missing required command: gh"
+  if $publish and not $create_github {
+    fail "--publish requires --create-github and --github-repo owner/name"
+  }
+  if $publish and $skip_install {
+    fail "--publish cannot be combined with --skip-install"
+  }
+  for command in ((if $create_github { ["gh"] } else { [] }) | append (if $publish { ["npm"] } else { [] })) {
+    if not (command-exists $command) {
+      fail $"Missing required command: ($command)"
+    }
   }
   if ($github_repo | is-not-empty) and not ($github_repo =~ '^[^/]+/[^/]+$') {
     fail $"GitHub repository must be owner/name: ($github_repo)"
@@ -258,12 +269,15 @@ bun run check
 
 ## Releasing
 
-1. Update `version` in `package.json` and commit the lockfile.
-2. For the initial release, run `npm publish` locally.
-3. In the npm package settings, configure GitHub Actions trusted publishing for `.github/workflows/publish.yml`.
-4. For later releases, create a GitHub release whose tag exactly matches `v<package.json version>`.
+Trusted publishing must already be configured for `publish.yml`. To release a new version:
 
-The publish workflow uses npm trusted publishing (OIDC), so it does not require a long-lived `NPM_TOKEN`.
+```sh
+bun pm version patch # or: minor / major
+git push origin main --follow-tags
+gh release create "$(git describe --tags --exact-match)" --generate-notes
+```
+
+Publishing the GitHub release runs the checks and publishes the matching package version to npm using OIDC. No long-lived `NPM_TOKEN` is required.
 
 ## License
 
@@ -282,9 +296,26 @@ MIT
 
   if $create_github {
     ^git -C $target add .
-    ^git -C $target commit -m "Initial release"
+    ^git -C $target commit -m $"Scaffold ($package_name)"
     ^gh repo create $github_repo --public --source $target --remote origin --push
   }
 
+  if $publish {
+    do { cd $target; ^npm publish }
+    do {
+      cd $target
+      ^npm trust github $package_name --repo $github_repo --file publish.yml --allow-publish --yes
+      ^npm trust list $package_name
+    }
+
+    let version = (open ($target | path join "package.json") | get version)
+    ^git -C $target tag -a $"v($version)" -m $"v($version)"
+    ^git -C $target push origin $"v($version)"
+  }
+
   print $"Created ($package_name) at ($target)"
+  if ($create_github and not $publish) {
+    print "After the first npm publish, configure OIDC with:"
+    print $"  npm trust github ($package_name) --repo ($github_repo) --file publish.yml --allow-publish"
+  }
 }
