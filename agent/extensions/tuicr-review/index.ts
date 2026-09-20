@@ -3,9 +3,12 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { readClipboardText } from "../shared/clipboard.js";
 import { latestCustomEntryData } from "../shared/session-entries.js";
+import { planTuicrCommand, type ReviewInput, TUICR_USAGE } from "./command.js";
 import { commentLabel } from "./labels.js";
 import { parseTuicrReview, type TuicrComment, type TuicrReview } from "./parser.js";
 import { resolveReviewPath } from "./path.js";
+import { formatPrompt } from "./prompt.js";
+import { remainingComments } from "./state.js";
 
 const STATE_ENTRY_TYPE = "tuicr-review-state";
 const STATUS_ID = "tuicr-review";
@@ -117,28 +120,6 @@ async function selectComments(
   return comments.filter((comment) => selectedIds.has(comment.id));
 }
 
-function formatPrompt(comments: TuicrComment[], additionalInformation: string): string {
-  const renderedComments = comments.map((comment, index) => {
-    const type = comment.type ? `**[${comment.type}]** ` : "";
-    const context = comment.context ? ` ${comment.context}` : "";
-    const bodyLines = comment.body.split("\n");
-    const firstLine = `${index + 1}. ${type}\`${comment.location}\`${context} - ${bodyLines[0] ?? ""}`;
-    const indent = " ".repeat(String(index + 1).length + 2);
-    return [firstLine, ...bodyLines.slice(1).map((line) => `${indent}${line}`)].join("\n");
-  });
-  const additional = additionalInformation.trim()
-    ? `\n\n## Additional information from the user\n\n${additionalInformation.trim()}`
-    : "";
-
-  return `Address the following selected code review comments exactly as described.
-
-Inspect the referenced code and surrounding context, make the necessary changes, and run relevant checks or tests. Address only these selected comments unless another change is strictly required to implement them correctly.
-
-## Selected review comments
-
-${renderedComments.join("\n\n")}${additional}`;
-}
-
 export default function tuicrReviewExtension(pi: ExtensionAPI) {
   let state: ReviewState | undefined;
 
@@ -156,11 +137,7 @@ export default function tuicrReviewExtension(pi: ExtensionAPI) {
     ctx.ui.setStatus(STATUS_ID, remaining > 0 ? ctx.ui.theme.fg("accent", `tuicr:${remaining}`) : undefined);
   };
 
-  const remainingComments = (): TuicrComment[] => {
-    if (!state) return [];
-    const addressed = new Set(state.addressedIds);
-    return state.review.comments.filter((comment) => !addressed.has(comment.id));
-  };
+  const remaining = (): TuicrComment[] => (state ? remainingComments(state.review, state.addressedIds) : []);
 
   const clearReview = (ctx: ExtensionContext) => {
     state = undefined;
@@ -178,14 +155,14 @@ export default function tuicrReviewExtension(pi: ExtensionAPI) {
       return;
     }
 
-    const remaining = remainingComments();
-    if (remaining.length === 0) {
+    const unaddressed = remaining();
+    if (unaddressed.length === 0) {
       updateStatus(ctx);
       ctx.ui.notify("All comments in the active tuicr review have been addressed.", "info");
       return;
     }
 
-    const selected = await selectComments(ctx, remaining);
+    const selected = await selectComments(ctx, unaddressed);
     if (!selected) return;
     if (selected.length === 0) {
       ctx.ui.notify("No comments selected.", "warning");
@@ -205,7 +182,7 @@ export default function tuicrReviewExtension(pi: ExtensionAPI) {
     updateStatus(ctx);
   };
 
-  const parseReview = async (argument: string, ctx: ExtensionCommandContext) => {
+  const parseReview = async (input: ReviewInput, ctx: ExtensionCommandContext) => {
     if (!ctx.isIdle()) {
       ctx.ui.notify("Wait for the current agent turn to finish before parsing a review.", "warning");
       return;
@@ -214,8 +191,8 @@ export default function tuicrReviewExtension(pi: ExtensionAPI) {
     try {
       let markdown: string;
       let source: string;
-      if (argument.trim()) {
-        source = resolveReviewPath(argument, ctx.cwd);
+      if (input.type === "file") {
+        source = resolveReviewPath(input.argument, ctx.cwd);
         markdown = await readFile(source, "utf8");
       } else {
         const clipboard = await readClipboardText((command, args) => pi.exec(command, args));
@@ -238,15 +215,6 @@ export default function tuicrReviewExtension(pi: ExtensionAPI) {
     }
   };
 
-  const runDefault = async (ctx: ExtensionCommandContext) => {
-    if (remainingComments().length > 0) {
-      await runRound(ctx);
-      return;
-    }
-
-    await parseReview("", ctx);
-  };
-
   pi.registerCommand("tuicr", {
     description: "Parse a tuicr review from the clipboard or resume the active review",
     getArgumentCompletions: (prefix) => {
@@ -260,30 +228,25 @@ export default function tuicrReviewExtension(pi: ExtensionAPI) {
       return matches.length > 0 ? matches : null;
     },
     handler: async (args, ctx) => {
-      const match = args.trim().match(/^(\S+)(?:\s+([\s\S]*))?$/);
-      const subcommand = match?.[1]?.toLowerCase();
-      const argument = match?.[2] ?? "";
+      const plan = planTuicrCommand(args, remaining().length);
 
-      if (!subcommand) {
-        await runDefault(ctx);
-        return;
+      switch (plan.kind) {
+        case "parse":
+          await parseReview(plan.input, ctx);
+          return;
+        case "resume":
+          await runRound(ctx);
+          return;
+        case "clear": {
+          const hadReview = state !== undefined;
+          clearReview(ctx);
+          ctx.ui.notify(hadReview ? "Cleared the queued tuicr review." : "No queued tuicr review to clear.", "info");
+          return;
+        }
+        case "usage":
+          ctx.ui.notify(TUICR_USAGE, "warning");
+          return;
       }
-      if (subcommand === "parse") {
-        await parseReview(argument, ctx);
-        return;
-      }
-      if (subcommand === "resume" && !argument.trim()) {
-        await runRound(ctx);
-        return;
-      }
-      if (subcommand === "clear" && !argument.trim()) {
-        const hadReview = state !== undefined;
-        clearReview(ctx);
-        ctx.ui.notify(hadReview ? "Cleared the queued tuicr review." : "No queued tuicr review to clear.", "info");
-        return;
-      }
-
-      ctx.ui.notify("Usage: /tuicr [parse [review-file]|resume|clear]", "warning");
     },
   });
 
