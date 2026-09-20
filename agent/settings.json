@@ -1,9 +1,11 @@
 {
-  "lastChangelogVersion": "0.85.1",
+  "lastChangelogVersion": "0.86.0",
   "defaultProvider": "claude-bridge",
   "defaultModel": "claude-fable-5.1",
   "extensions": [],
-  "npmCommand": ["bun"],
+  "npmCommand": [
+    "bun"
+  ],
   "defaultThinkingLevel": "high",
   "packages": [
     "npm:pi-web-access",
