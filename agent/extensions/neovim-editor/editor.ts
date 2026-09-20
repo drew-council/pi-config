@@ -190,6 +190,13 @@ export class NeovimEditor implements EditorComponent {
   }
 
   render(width: number): string[] {
+    // Pi re-applies the `showHardwareCursor` user setting (default false) after
+    // extension reload via handleReloadCommand → applyRuntimeSettings, which
+    // runs *after* session_start has constructed this editor. Left uncorrected,
+    // the hidden hardware cursor demotes the grid to its software
+    // reverse-video cursor, so Neovim's insert/replace shapes stop rendering.
+    // Re-assert on every frame; the TUI setter is a no-op when unchanged.
+    if (!this.tui.getShowHardwareCursor()) this.tui.setShowHardwareCursor(true);
     this.lastWidth = width;
     this.lastHeight = neovimGridHeight(this.state.displayHeight, this.tui.terminal.rows);
     const contentWidth = this.contentWidth(width);
