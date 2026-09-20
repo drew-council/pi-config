@@ -13,7 +13,8 @@
       "prompts": []
     },
     "npm:pi-claude-bridge",
-    "npm:pi-multi-skills"
+    "npm:pi-multi-skills",
+    "npm:@bizmyth/pi-review"
   ],
   "theme": "catppuccin-mocha",
   "hideThinkingBlock": true,
