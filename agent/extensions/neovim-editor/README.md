@@ -1,6 +1,6 @@
 # Embedded Neovim prompt editor
 
-Pi's prompt area is backed by a real `nvim --embed` process connected through a small MessagePack-RPC client. Neovim owns buffer editing, modes, mappings, registers, macros, search, command-line behavior, undo, and rendering. Pi still owns prompt submission, application actions, global prompt history, image insertion, and its autocomplete providers.
+Pi's prompt area is backed by a real `nvim --embed` process connected through a small MessagePack-RPC client. Neovim owns buffer editing, modes, mappings, registers, macros, search, command-line behavior, undo, and rendering. Pi still owns prompt submission, application actions, prompt history, image insertion, and its autocomplete providers.
 
 ## Requirements and startup
 
@@ -19,11 +19,22 @@ If startup fails, fix the reported Neovim/configuration error and run `/reload`.
 - Ordinary editor input is passed to Neovim unless its configured action is explicitly owned by Pi.
 - Pi autocomplete remains available for slash commands, command arguments, attachments, extension trigger characters, and forced path completion. Its list is rendered below the Neovim grid.
 - `Ctrl+V` uses Pi's standard clipboard handler: images are saved to Pi's temporary file and their path is inserted into the Neovim prompt; plain text falls back to normal clipboard insertion.
-- Persistent prompt history continues to operate on the Neovim prompt buffer.
+- Prompt history operates on the Neovim prompt buffer.
 
 ## History and programmatic edits
 
-Prompt history remains in `~/.pi/agent/prompt-history.json`; `/history-clear` clears it. Pi's external editor, queued-message restoration, extension text insertion, paste-to-editor, and clipboard image paths update the native prompt buffer through Neovim APIs.
+Prompt history is per session and held in memory, as in the stock editor. Pi leaves `tui.editor.historyPrevious` and `tui.editor.historyNext` unbound, so bind them in `keybindings.json` to browse it:
+
+```json
+{
+  "tui.editor.historyPrevious": "ctrl+up",
+  "tui.editor.historyNext": "ctrl+down"
+}
+```
+
+Stepping past the newest entry restores the text that was in the buffer when browsing began, and editing the buffer resets the position so the next previous starts at the newest entry again. Nothing is written to disk. A separate extension can add cross-session persistence by registering its own shortcuts and calling `setEditorText`.
+
+Pi's external editor, queued-message restoration, extension text insertion, paste-to-editor, and clipboard image paths update the native prompt buffer through Neovim APIs.
 
 ## Current limitations
 

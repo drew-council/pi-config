@@ -20,7 +20,6 @@ interface NeovimEditorOptions {
   cwd: string;
   notify: (message: string, level: "info" | "error") => void;
   colorizeMode?: (mode: string, label: string) => string;
-  history?: PromptHistory;
 }
 
 const normalizeKeys = (value: KeyId | KeyId[] | undefined): KeyId[] =>
@@ -49,7 +48,7 @@ export class NeovimEditor implements EditorComponent {
   private readonly autocomplete: PiAutocompleteController;
   private readonly inputParser = new NeovimInputParser();
   private inputFlushTimer?: ReturnType<typeof setTimeout>;
-  private readonly history: PromptHistory;
+  private readonly history = new PromptHistory();
   private paddingX = 0;
   private started = false;
   private disposed = false;
@@ -75,7 +74,6 @@ export class NeovimEditor implements EditorComponent {
     // receive input. Release it so the configured app.exit binding can route here.
     this.restoreDebugHandler = releaseGlobalDebugHandler(tui);
     tui.setShowHardwareCursor(true);
-    this.history = options.history ?? new PromptHistory();
     this.host = this.createHost("");
     this.autocomplete = new PiAutocompleteController({
       tui,
@@ -179,14 +177,6 @@ export class NeovimEditor implements EditorComponent {
 
   addToHistory(text: string): void {
     this.history.add(text);
-  }
-
-  enableHistoryPersistence(): void {
-    this.history.enablePersistence();
-  }
-
-  clearHistory(): void {
-    this.history.clear();
   }
 
   render(width: number): string[] {

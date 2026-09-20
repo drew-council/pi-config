@@ -17,8 +17,6 @@
   "app.clipboard.pasteImage": "ctrl+v",
   "tui.input.submit": "ctrl+enter",
   "tui.input.tab": "tab",
-  "tui.editor.historyPrevious": "ctrl+up",
-  "tui.editor.historyNext": "ctrl+down",
   "app.tree.foldOrUp": "ctrl+left",
   "app.tree.unfoldOrDown": "ctrl+right",
   "app.models.reorderUp": "ctrl+shift+up",
@@ -31,5 +29,7 @@
   "tui.select.pageDown": "pageDown",
   "tui.select.confirm": "enter",
   "tui.select.cancel": "escape",
-  "extension.resumeInterrupted": "alt+p"
+  "extension.resumeInterrupted": "alt+p",
+  "extension.historyPrevious": "ctrl+up",
+  "extension.historyNext": "ctrl+down"
 }

@@ -30,8 +30,7 @@ one machine. Follow the pattern of the earlier factor-outs (`7cee1de` for
      reports its own missing-binary error at runtime.
 
 6. **Plans.** Remove the `neovim-editor` line from the factor-out list in
-   `future-plans.md`. `global-history-plan.md` is handled by the separate
-   global-history task, not here.
+   `future-plans.md`.
 
 ## Verification
 

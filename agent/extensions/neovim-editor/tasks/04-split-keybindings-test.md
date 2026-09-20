@@ -28,8 +28,8 @@ away and only the personal one remains.
 3. Extend the personal test to assert whichever bindings the Neovim editor
    depends on for the local workflow (submit on `ctrl+enter`), since after
    task 01 those are no longer the only way the editor works but are still
-   the way this machine is configured. Do not assert the history chords; the
-   global-history task moves `ctrl+up`/`ctrl+down` to extension shortcuts.
+   the way this machine is configured. Do not assert the history chords;
+   `ctrl+up`/`ctrl+down` now belong to the `history` extension's shortcuts.
 
 ## Verification
 

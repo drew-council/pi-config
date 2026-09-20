@@ -1,54 +1,56 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
+import { describe, expect, test } from "bun:test";
 import { PromptHistory } from "../../extensions/neovim-editor/history";
 
-const temporaryDirectories: string[] = [];
-
-afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
-});
-
-function historyFile(): string {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-neovim-history-"));
-  temporaryDirectories.push(directory);
-  return path.join(directory, "prompt-history.json");
-}
-
 describe("embedded Neovim prompt history", () => {
-  test("persists de-duplicated newest-first entries and restores a draft", () => {
-    const file = historyFile();
-    const history = new PromptHistory(file);
-    history.enablePersistence();
+  test("keeps de-duplicated newest-first entries and skips blank text", () => {
+    const history = new PromptHistory();
     history.add(" first ");
+    history.add("   ");
     history.add("second");
     history.add("first");
 
-    expect(JSON.parse(fs.readFileSync(file, "utf8")).entries).toEqual(["first", "second"]);
-    expect(history.navigate("previous", "draft text")).toBe("first");
+    expect(history.navigate("previous", "draft")).toBe("first");
     expect(history.navigate("previous", "first")).toBe("second");
-    expect(history.navigate("next", "second")).toBe("first");
-    expect(history.navigate("next", "first")).toBe("draft text");
+    expect(history.navigate("previous", "second")).toBeUndefined();
   });
 
-  test("tolerates malformed data and atomically replaces it on the next save", () => {
-    const file = historyFile();
-    fs.writeFileSync(file, "not json");
-    const history = new PromptHistory(file);
+  test("restores the draft when stepping past the newest entry", () => {
+    const history = new PromptHistory();
+    history.add("older");
+    history.add("newest");
+
+    expect(history.navigate("previous", "draft text")).toBe("newest");
+    expect(history.navigate("previous", "newest")).toBe("older");
+    expect(history.navigate("next", "older")).toBe("newest");
+    expect(history.navigate("next", "newest")).toBe("draft text");
+    expect(history.navigate("next", "draft text")).toBeUndefined();
+  });
+
+  test("caps the entry list at 100", () => {
+    const history = new PromptHistory();
+    for (let index = 0; index < 150; index += 1) history.add(`entry ${index}`);
+
+    for (let step = 0; step < 100; step += 1) {
+      expect(history.navigate("previous", "")).toBe(`entry ${149 - step}`);
+    }
+    expect(history.navigate("previous", "")).toBeUndefined();
+  });
+
+  test("resets navigation on submit and on demand", () => {
+    const history = new PromptHistory();
+    history.add("older");
+    history.navigate("previous", "draft");
+
+    history.add("newest");
+    expect(history.navigate("previous", "")).toBe("newest");
+
+    history.resetNavigation();
+    expect(history.navigate("previous", "")).toBe("newest");
+  });
+
+  test("does nothing without entries", () => {
+    const history = new PromptHistory();
     expect(history.navigate("previous", "draft")).toBeUndefined();
-
-    history.enablePersistence();
-    history.add("usable");
-    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual({ version: 1, entries: ["usable"] });
-    expect(fs.readdirSync(path.dirname(file))).toEqual(["prompt-history.json"]);
-  });
-
-  test("does not persist session replay before persistence is enabled", () => {
-    const file = historyFile();
-    const history = new PromptHistory(file);
-    history.add("replayed session message");
-    expect(fs.existsSync(file)).toBe(false);
-    expect(history.navigate("previous", "")).toBe("replayed session message");
+    expect(history.navigate("next", "draft")).toBeUndefined();
   });
 });
