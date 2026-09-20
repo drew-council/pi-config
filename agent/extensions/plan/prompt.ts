@@ -71,9 +71,7 @@ Write the finished plan to the target plan file. The plan file should be self-co
 - Acceptance criteria
 - Risks, dependencies, and open questions
 
-Every question must include a suggested answer. You've done the research, so use it to propose the best default. The user can confirm or correct rather than figure it out from scratch. For each suggestion, explain the tradeoff: what alternatives you considered and why you chose this one over them.
-
-When the plan file has been written, call the finish_plan tool. Do not provide a separate final message after that tool call.`;
+Every question must include a suggested answer. You've done the research, so use it to propose the best default. The user can confirm or correct rather than figure it out from scratch. For each suggestion, explain the tradeoff: what alternatives you considered and why you chose this one over them.`;
 
 export function makePlanPrompt(description: string, planDir: string): string {
   return `${BASE_PLAN_PROMPT}
@@ -94,7 +92,7 @@ Examples:
 - \`auth-session-refresh-plan.md\`
 - \`storybook-component-docs-plan.md\`
 
-Create or overwrite only that plan file inside the target directory. Do not modify project files. After the plan file is complete, call \`finish_plan\` with the exact path you chose.`;
+Create or overwrite only that plan file inside the target directory. Do not modify project files.`;
 }
 
 export function makeImplementPrompt(planFile: string, planContent: string): string {
