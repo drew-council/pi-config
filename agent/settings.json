@@ -18,6 +18,7 @@
     "npm:@bizmyth/pi-review",
     "npm:@bizmyth/pi-git-conflicts",
     "npm:@bizmyth/pi-neovim-editor",
+    "npm:@bizmyth/pi-address-review-comments",
     "git:github.com/elidickinson/pi-claude-bridge@10da8502332f6630787668559eb8922186a5004f"
   ],
   "theme": "catppuccin-mocha",
