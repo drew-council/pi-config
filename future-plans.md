@@ -1,8 +1,5 @@
 factor out into separate extension for potential use by others
 - agent/extensions/address-review-comments
-- agent/extensions/git-conflicts.ts
-    - needs cleanup, should have directory instead of one big file
-    - should be gh-stack compatible
 
 model picking: fzf recent history of model + effort
 
