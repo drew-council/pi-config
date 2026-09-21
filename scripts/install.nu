@@ -233,7 +233,6 @@ def main [
   ^bun install --cwd $agent_dir --frozen-lockfile
 
   let required_local_packages = [
-    ($agent_dir | path join "node_modules" "@msgpack" "msgpack")
     ($agent_dir | path join "node_modules" "qrcode")
     ($agent_dir | path join "node_modules" "remark-parse")
     ($agent_dir | path join "node_modules" "unified")

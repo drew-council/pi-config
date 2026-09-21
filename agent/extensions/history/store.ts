@@ -1,5 +1,4 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 
 const HISTORY_VERSION = 1;
@@ -31,45 +30,29 @@ function normalizeEntries(entries: unknown, limit = MAX_PERSISTED_ENTRIES): stri
   return result;
 }
 
-export class PromptHistory {
-  private entries: string[];
-  private index = -1;
-  private draft = "";
-  private persistenceEnabled = false;
+/** Newest-first prompt history shared by every session through a JSON file. */
+export class PromptHistoryStore {
+  constructor(private readonly file: string) {}
 
-  constructor(private readonly file = path.join(os.homedir(), ".pi", "agent", "prompt-history.json")) {
-    this.entries = this.read().slice(0, MAX_ACTIVE_ENTRIES);
+  load(): string[] {
+    return this.read().slice(0, MAX_ACTIVE_ENTRIES);
   }
 
-  enablePersistence(): void {
-    this.persistenceEnabled = true;
-  }
-
-  add(text: string): void {
+  /** Persist an entry and return the refreshed window, or undefined when the text is blank. */
+  add(text: string): string[] | undefined {
     const entry = normalizeEntry(text);
-    if (!entry) return;
-    this.entries = [entry, ...this.entries.filter((existing) => existing !== entry)].slice(0, MAX_ACTIVE_ENTRIES);
-    this.resetNavigation();
-    if (this.persistenceEnabled) this.saveEntry(entry);
-  }
-
-  navigate(direction: "previous" | "next", currentText: string): string | undefined {
-    if (this.entries.length === 0) return undefined;
-    if (this.index === -1 && direction === "previous") this.draft = currentText;
-    const nextIndex = direction === "previous" ? this.index + 1 : this.index - 1;
-    if (nextIndex < -1 || nextIndex >= this.entries.length) return undefined;
-    this.index = nextIndex;
-    return this.index === -1 ? this.draft : this.entries[this.index];
-  }
-
-  resetNavigation(): void {
-    this.index = -1;
-    this.draft = "";
+    if (!entry) return undefined;
+    let entries = [entry];
+    try {
+      entries = [entry, ...this.read().filter((existing) => existing !== entry)];
+      this.write(entries);
+    } catch {
+      // Prompt history must never prevent submission.
+    }
+    return entries.slice(0, MAX_ACTIVE_ENTRIES);
   }
 
   clear(): void {
-    this.entries = [];
-    this.resetNavigation();
     this.write([]);
   }
 
@@ -80,15 +63,6 @@ export class PromptHistory {
       return normalizeEntries(parsed.entries);
     } catch {
       return [];
-    }
-  }
-
-  private saveEntry(entry: string): void {
-    try {
-      const current = this.read();
-      this.write([entry, ...current.filter((existing) => existing !== entry)]);
-    } catch {
-      // Prompt history must never prevent submission.
     }
   }
 
