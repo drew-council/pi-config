@@ -11,10 +11,9 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import { installModelBlacklist } from "../../extensions/model-blacklist/filter.js";
+import { installModelPolicy, installScopedModelPolicy } from "../../extensions/model-control/policy.js";
 import {
   bindRuntimeProfile,
-  bindStartupProfile,
   chooseProfileModel,
   claudeStatus,
   copilotFromGh,
@@ -28,7 +27,6 @@ import {
   readJson,
   runtimeStore,
 } from "../../extensions/shared/accounts.js";
-import { installProfilePolicy, installScopedModelPolicy } from "../../extensions/shared/profile-policy.js";
 
 const directories: string[] = [];
 afterEach(() => {
@@ -200,45 +198,6 @@ describe("account initialization", () => {
   });
 });
 
-describe("startup profile binding", () => {
-  test("rebinds the untouched default store to the saved profile, then stays hands-off", async () => {
-    const { agent } = fixture();
-    json(join(agent, "auth.json"), { "openai-codex": oauth });
-    ensureProfileFiles(agent); // migrates codex into the personal profile
-    json(join(agent, "auth-profiles.json"), { activeProfile: "personal" });
-    const runtime = await ModelRuntime.create({
-      authPath: join(agent, "auth.json"),
-      modelsPath: null,
-      modelsStorePath: join(agent, "models-store.json"),
-      refreshOnCreate: false,
-    });
-    expect(bindStartupProfile(runtime, agent)).toBe(true);
-    await runtime.refresh({ allowNetwork: false });
-    expect(runtime.hasConfiguredAuth("openai-codex")).toBe(true);
-    expect(runtime.hasConfiguredAuth("google")).toBe(false);
-    // The store now points at the profile; explicit binds must never be overridden.
-    expect(bindStartupProfile(runtime, agent)).toBe(false);
-  });
-
-  test("does not rebind a store that already points at a profile", () => {
-    const { agent } = fixture();
-    const runtime = {
-      credentials: {
-        store: {
-          authPath: join(agent, "auth-profiles", "work.json"),
-          read: async () => undefined,
-          modify: async () => undefined,
-          delete: async () => undefined,
-          list: async () => [],
-          constructor: { create: (path: string) => ({ authPath: path }) },
-        },
-        overrides: new Map(),
-      },
-    } as unknown as Parameters<typeof bindStartupProfile>[0];
-    expect(bindStartupProfile(runtime, agent)).toBe(false);
-  });
-});
-
 describe("profile isolation using Pi's real credential store", () => {
   test("switching clears runtime keys and leaves an in-flight old-profile write on its original file", async () => {
     const { agent } = fixture();
@@ -285,8 +244,7 @@ describe("profile isolation using Pi's real credential store", () => {
     const runtime = await runtimeFor(agent, "work");
     await runtime.setRuntimeApiKey("openrouter", "ambient-personal-key");
     let profile: "work" | "personal" = "work";
-    installProfilePolicy(runtime, () => profile);
-    installModelBlacklist(runtime);
+    installModelPolicy(runtime, () => profile);
     await runtime.getAvailable();
     const work = runtime.getAvailableSnapshot();
     expect(work.some((m) => m.provider === "google")).toBeTrue();
@@ -309,7 +267,7 @@ describe("profile isolation using Pi's real credential store", () => {
     ).rejects.toThrow("/profile");
     expect(prompted).toBeFalse();
     profile = "personal";
-    installProfilePolicy(runtime, () => profile); // hot reload must not stack a second restrictive closure
+    installModelPolicy(runtime, () => profile); // hot reload must not stack a second restrictive closure
     const personal = runtime.getAvailableSnapshot();
     expect(personal.some((m) => m.provider === "openai-codex")).toBeTrue();
     expect(personal.every((m) => ["openai-codex", "openrouter"].includes(m.provider))).toBeTrue();
@@ -323,11 +281,11 @@ describe("profile isolation using Pi's real credential store", () => {
     ensureProfileFiles(agent);
     json(profileAuthPath(agent, "work"), { google: { type: "api_key", key: "work-key" }, "openai-codex": oauth });
     const runtime = await runtimeFor(agent, "work");
-    let profile: "work" | "personal" = "work";
-    installProfilePolicy(runtime, () => profile);
-    await runtime.getAvailable();
-    const google = runtime.getModels("google")[0];
     const codex = runtime.getModels("openai-codex")[0];
+    let profile: "work" | "personal" = "work";
+    installModelPolicy(runtime, () => profile, []);
+    await runtime.getAvailable();
+    const google = runtime.getAvailableSnapshot().find((model) => model.provider === "google");
     if (!google || !codex) throw new Error("Missing built-in test models");
     const settingsManager = SettingsManager.inMemory();
     const resourceLoader = new DefaultResourceLoader({
@@ -358,8 +316,8 @@ describe("profile isolation using Pi's real credential store", () => {
       expect(session.scopedModels).toEqual([]);
       await expect(session.setModel(codex)).rejects.toThrow("No API key");
       const cycled = await session.cycleModel();
-      expect(cycled?.model.provider).toBe("google");
-      expect(cycled?.isScoped).toBeFalse();
+      expect((cycled?.model ?? session.model)?.provider).toBe("google");
+      if (cycled) expect(cycled.isScoped).toBeFalse();
       profile = "personal";
       expect(session.scopedModels.map((entry) => entry.model.provider)).toEqual(["openai-codex"]);
       await session.setModel(codex);

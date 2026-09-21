@@ -1,19 +1,25 @@
-import type { Api, AuthInteraction, AuthPrompt, Model } from "@earendil-works/pi-ai";
 import {
-  AgentSession,
+  type Api,
+  type AuthInteraction,
+  type AuthPrompt,
+  clampThinkingLevel,
+  type Model,
+  type ModelThinkingLevel,
+} from "@earendil-works/pi-ai";
+import {
   BorderedLoader,
   type ExtensionAPI,
   type ExtensionContext,
   getAgentDir,
   LoginDialogComponent,
   type ModelRegistry,
-  ModelRuntime,
+  type ModelRuntime,
+  parseArgs,
 } from "@earendil-works/pi-coding-agent";
 import {
   ACCOUNTS,
   type Account,
   bindRuntimeProfile,
-  bindStartupProfile,
   chooseProfileModel,
   claudeStatus,
   copilotFromGh,
@@ -21,52 +27,34 @@ import {
   importAccountKey,
   importMissingAccountKey,
   isProfileName,
-  PROFILE_DEFAULTS,
   PROFILE_NAMES,
   type ProfileName,
   profileAuthPath,
-  profileDefaultModel,
   profileForDirectory,
   providerAllowed,
   providersFor,
   readActiveProfile,
   readJson,
+  runtimeStore,
   saveCopilot,
   verifyGitHubAccount,
   writeActiveProfile,
-} from "./shared/accounts.js";
-import { installProfilePolicy, installScopedModelPolicy } from "./shared/profile-policy.js";
+} from "../shared/accounts.js";
+import { showModelEffortPicker } from "./picker.js";
+import { type ModelEffortPreference, readProfileDefault, writeProfileDefault } from "./preferences.js";
+import { installRuntimeAdapters, installStartupProfileBinding } from "./runtime-adapter.js";
+import { createActualUseRecorder, readRecentUsage } from "./usage.js";
 
 export function getRuntime(registry: ModelRegistry): ModelRuntime {
   const runtime = (registry as unknown as { runtime?: ModelRuntime }).runtime;
   if (!runtime || typeof runtime.login !== "function")
-    throw new Error("Pi's model registry API changed; update auth-profiles.");
+    throw new Error("Pi's model registry API changed; update model-control.");
   return runtime;
 }
 
 async function closeProviderSessions(): Promise<void> {
   const ai = await import("@earendil-works/pi-ai");
   ai.cleanupSessionResources();
-}
-
-function refreshRegistryInBackground(
-  registry: Pick<ModelRegistry, "refresh">,
-  providers: readonly string[],
-  cleanup: () => Promise<void> = closeProviderSessions,
-  timeoutMs = 1_000,
-  after: () => Promise<void> = async () => {},
-): void {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  timeout.unref?.();
-  // Never let provider refresh hold up session_start or TUI initialization.
-  void Promise.resolve()
-    .then(cleanup)
-    .then(() => registry.refresh({ allowNetwork: false, providers, signal: controller.signal }))
-    .catch(() => {})
-    .then(after)
-    .catch(() => {})
-    .finally(() => clearTimeout(timeout));
 }
 
 async function withProgress<T>(
@@ -155,129 +143,156 @@ async function oauthLogin(
   });
 }
 
-export async function ensureProfileModel(
-  pi: Pick<ExtensionAPI, "setModel">,
-  ctx: Pick<ExtensionContext, "model" | "modelRegistry">,
+type PairContext = Pick<ExtensionContext, "model" | "modelRegistry" | "thinkingLevel">;
+export type AppliedProfileDefault = { pair: ModelEffortPreference; usedFallback: boolean };
+
+export function currentPair(ctx: PairContext): ModelEffortPreference | undefined {
+  return ctx.model
+    ? { provider: ctx.model.provider, model: ctx.model.id, thinking: ctx.thinkingLevel ?? "off" }
+    : undefined;
+}
+
+export function pairIsAvailable(ctx: PairContext, pair: ModelEffortPreference): boolean {
+  const model = ctx.modelRegistry
+    .getAvailable()
+    .find((candidate) => candidate.provider === pair.provider && candidate.id === pair.model);
+  return Boolean(model && clampThinkingLevel(model, pair.thinking) === pair.thinking);
+}
+
+export async function applyModelEffortPair(
+  pi: Pick<ExtensionAPI, "setModel" | "setThinkingLevel">,
+  ctx: PairContext,
+  model: Model<Api>,
+  thinking: ModelThinkingLevel,
+): Promise<ModelEffortPreference | undefined> {
+  if (!ctx.model || ctx.model.provider !== model.provider || ctx.model.id !== model.id) {
+    if (!(await pi.setModel(model))) return undefined;
+  }
+  const effectiveThinking = clampThinkingLevel(model, thinking);
+  pi.setThinkingLevel(effectiveThinking);
+  return { provider: model.provider, model: model.id, thinking: effectiveThinking };
+}
+
+export async function applyProfileDefault(
+  pi: Pick<ExtensionAPI, "setModel" | "setThinkingLevel">,
+  ctx: PairContext,
   profile: ProfileName,
-  remembered?: Model<Api>,
-): Promise<void> {
-  if (ctx.model && providerAllowed(profile, ctx.model.provider)) return;
-  let candidates = ctx.modelRegistry.getAvailable().filter((model) => providerAllowed(profile, model.provider));
-  if (candidates.length === 0) {
+  preference = readProfileDefault(getAgentDir(), profile),
+): Promise<AppliedProfileDefault> {
+  let available = ctx.modelRegistry.getAvailable();
+  if (available.length === 0) {
     throw new Error(
       `No ${profile} model is available: none of ${providersFor(profile).join(", ")} has a saved login in ${profileAuthPath(getAgentDir(), profile)}. Run /log-me-in (or ~/.pi/scripts/install.nu) to connect one.`,
     );
   }
+  const exact = available.find((model) => model.provider === preference.provider && model.id === preference.model);
   const rejected: string[] = [];
-  while (candidates.length) {
-    const next = chooseProfileModel(candidates, profile, remembered);
-    if (!next) break;
-    if (await pi.setModel(next)) return;
+  let next = exact ?? chooseProfileModel(available, profile);
+  while (next) {
+    const applied = await applyModelEffortPair(pi, ctx, next, preference.thinking);
+    if (applied) return { pair: applied, usedFallback: next !== exact || applied.thinking !== preference.thinking };
     rejected.push(next.provider);
-    candidates = candidates.filter((model) => model.provider !== next.provider);
+    available = available.filter((model) => model.provider !== next?.provider);
+    next = chooseProfileModel(available, profile);
   }
   throw new Error(
     `No usable ${profile} model: Pi rejected the saved login for ${rejected.join(", ")}. Run /log-me-in.`,
   );
 }
 
-const startupBindingMarker = Symbol.for("pi.auth-profile.startup-binding");
-
-/**
- * A spawned Pi process inherits the parent's selected auth profile. Preserve an
- * allowed model that its launcher selected explicitly instead of replacing it
- * with the profile default during the child's asynchronous startup refresh.
- */
-export function inheritedLaunchModel(
-  model: Model<Api> | undefined,
-  profile: ProfileName,
-  inheritedProfile: string | undefined,
-): Model<Api> | undefined {
-  return inheritedProfile === profile && model && providerAllowed(profile, model.provider) ? model : undefined;
-}
-
-/**
- * Applies a profile's saved default model (and thinking level) so each account
- * starts on its own model instead of pi's single global default or the first
- * available fallback. A model remembered from this session wins, keeping
- * manual /model choices across /profile switches; the thinking level is only
- * managed alongside the saved default model.
- */
-export async function applyProfileDefault(
+export async function ensureProfilePair(
   pi: Pick<ExtensionAPI, "setModel" | "setThinkingLevel">,
-  ctx: Pick<ExtensionContext, "model" | "modelRegistry">,
+  ctx: PairContext,
   profile: ProfileName,
-  remembered?: Model<Api>,
-): Promise<boolean> {
-  const available = ctx.modelRegistry.getAvailable().filter((model) => providerAllowed(profile, model.provider));
-  const rememberedAvailable =
-    remembered && available.some((model) => model.provider === remembered.provider && model.id === remembered.id)
-      ? remembered
-      : undefined;
-  const target = rememberedAvailable ?? profileDefaultModel(available, profile);
-  if (!target) return false;
-  const current = ctx.model;
-  if (!current || current.provider !== target.provider || current.id !== target.id) {
-    if (!(await pi.setModel(target))) return false;
-  }
-  if (!rememberedAvailable) pi.setThinkingLevel(PROFILE_DEFAULTS[profile].thinking);
-  return true;
+  preference = readProfileDefault(getAgentDir(), profile),
+): Promise<AppliedProfileDefault | undefined> {
+  const pair = currentPair(ctx);
+  if (pair && pairIsAvailable(ctx, pair) && providerAllowed(profile, pair.provider)) return undefined;
+  return applyProfileDefault(pi, ctx, profile, preference);
 }
-type RefreshOptions = { providers?: string[]; allowNetwork?: boolean; signal?: AbortSignal };
-type RefreshTarget = {
-  refresh?: (this: ModelRuntime, options?: RefreshOptions) => Promise<unknown>;
-  [startupBindingMarker]?: boolean;
-};
 
-/**
- * Pi computes the startup model list — and the "No models available" warning —
- * from auth.json before any session_start handler runs: extension loading is
- * followed by one awaited registry refresh, then findInitialModel. Wrapping
- * refresh rebinds the active profile's credential store in time for that
- * startup refresh, so models are available immediately. Reload-safe; the
- * bindStartupProfile guard keeps explicit profile binds authoritative.
- */
-export function installStartupProfileBinding(agentDir: string, target: RefreshTarget = ModelRuntime.prototype): void {
-  if (target[startupBindingMarker]) return;
-  const refresh = target.refresh;
-  if (typeof refresh !== "function") throw new Error("Pi's ModelRuntime.refresh API changed; update auth-profiles.");
-  target.refresh = function (this: ModelRuntime, options?: RefreshOptions) {
-    try {
-      bindStartupProfile(this, agentDir);
-    } catch {
-      // A missing or unreadable profile file must never break pi's own refresh.
+export function thinkingFromModelArgument(model: string | undefined): ModelThinkingLevel | undefined {
+  const level = model?.match(/:(off|minimal|low|medium|high|xhigh|max)$/)?.[1];
+  return level as ModelThinkingLevel | undefined;
+}
+
+export function shouldPreserveSessionPair(
+  reason: "startup" | "reload" | "new" | "resume" | "fork",
+  startup: { explicitPair: boolean; restoresSession: boolean; inheritedProfile: boolean },
+): boolean {
+  return (
+    reason === "reload" ||
+    reason === "resume" ||
+    reason === "fork" ||
+    (reason === "startup" && (startup.explicitPair || startup.restoresSession || startup.inheritedProfile))
+  );
+}
+
+export async function runProfileSwitchTransaction(options: {
+  previousProfile: ProfileName;
+  targetProfile: ProfileName;
+  prepare(profile: ProfileName): Promise<void>;
+  refresh(profile: ProfileName): Promise<unknown>;
+  login?: () => Promise<void>;
+  applyDefault(profile: ProfileName): Promise<unknown>;
+  rollback(profile: ProfileName): Promise<void> | void;
+  restorePair(): Promise<void>;
+}): Promise<{ ok: true } | { ok: false; error: unknown }> {
+  try {
+    await options.prepare(options.targetProfile);
+    await options.refresh(options.targetProfile);
+    if (options.login) {
+      await options.login();
+      await options.refresh(options.targetProfile);
     }
-    return refresh.call(this, options);
-  };
-  target[startupBindingMarker] = true;
+    await options.applyDefault(options.targetProfile);
+    return { ok: true };
+  } catch (error) {
+    await options.rollback(options.previousProfile);
+    await options.refresh(options.previousProfile).catch(() => {});
+    await options.restorePair().catch(() => {});
+    return { ok: false, error };
+  }
 }
 
-export default function authProfiles(pi: ExtensionAPI) {
+export default function modelControl(pi: ExtensionAPI) {
   const agentDir = getAgentDir();
-  let activeProfile = readActiveProfile(agentDir);
+  ensureProfileFiles(agentDir);
+  const inheritedProfile = isProfileName(process.env.PI_AUTH_PROFILE) ? process.env.PI_AUTH_PROFILE : undefined;
+  let activeProfile = inheritedProfile ?? profileForDirectory(process.cwd()) ?? readActiveProfile(agentDir);
   let busy = false;
+  const usageRecorder = createActualUseRecorder(agentDir, () => activeProfile);
   const shutdown = new AbortController();
-  const remembered = new Map<ProfileName, Model<Api>>();
-  // Installed during discovery, before the first interactive picker/request.
-  installProfilePolicy(ModelRuntime.prototype, () => activeProfile);
-  installScopedModelPolicy(AgentSession.prototype);
-  installStartupProfileBinding(agentDir);
+  let args: ReturnType<typeof parseArgs> | undefined;
+  try {
+    args = parseArgs(process.argv.slice(2));
+  } catch {
+    args = undefined;
+  }
+  const startupHasExplicitPair = Boolean(args?.provider || args?.model || args?.thinking);
+  const startupExplicitThinking = args?.thinking ?? thinkingFromModelArgument(args?.model);
+  const startupRestoresSession = Boolean(args?.continue || args?.resume || args?.session || args?.fork);
+
+  process.env.PI_AUTH_PROFILE = activeProfile;
 
   const setStatus = (ctx: ExtensionContext) =>
     ctx.ui.setStatus("auth-profile", ctx.ui.theme.fg("accent", `profile: ${activeProfile}`));
-  const ensureModel = (ctx: ExtensionContext) =>
-    ensureProfileModel(pi, ctx, activeProfile, remembered.get(activeProfile));
-  const applyDefault = (ctx: ExtensionContext, profile: ProfileName, launchModel?: Model<Api>) =>
-    applyProfileDefault(pi, ctx, profile, remembered.get(profile) ?? launchModel);
-  // Binds the profile's credential store and seeds its managed API key from the
-  // local secret file before refreshing, so a checkout whose profile file was
-  // never initialized still comes up with a usable model.
-  const prepareProfile = async (ctx: ExtensionContext, profile: ProfileName) => {
-    const runtime = getRuntime(ctx.modelRegistry);
-    bindRuntimeProfile(runtime, agentDir, profile);
-    activeProfile = profile;
-    await closeProviderSessions();
-    await importMissingAccountKey(runtime, agentDir, profile);
+  const notifyFallback = (ctx: ExtensionContext, profile: ProfileName, result: AppliedProfileDefault | undefined) => {
+    if (!result?.usedFallback) return;
+    ctx.ui.notify(
+      `${profile} default is unavailable; using ${result.pair.provider}/${result.pair.model}:${result.pair.thinking}.`,
+      "warning",
+    );
+  };
+  const applyDefault = async (ctx: ExtensionContext, profile: ProfileName) => {
+    const result = await applyProfileDefault(pi, ctx, profile, readProfileDefault(agentDir, profile));
+    notifyFallback(ctx, profile, result);
+    return result;
+  };
+  const ensurePair = async (ctx: ExtensionContext) => {
+    const result = await ensureProfilePair(pi, ctx, activeProfile, readProfileDefault(agentDir, activeProfile));
+    notifyFallback(ctx, activeProfile, result);
+    return result;
   };
   const refreshProfile = (ctx: ExtensionContext, profile: ProfileName) =>
     ctx.modelRegistry.refresh({
@@ -285,80 +300,143 @@ export default function authProfiles(pi: ExtensionAPI) {
       allowNetwork: false,
       signal: AbortSignal.timeout(5_000),
     });
-  /**
-   * Switches accounts. `login` runs after the target profile's credentials are
-   * bound but before a model is required, so /log-me-in can connect an account
-   * in a profile that has no usable login yet instead of being refused.
-   */
+  const prepareProfile = async (ctx: ExtensionContext, profile: ProfileName) => {
+    activeProfile = profile;
+    const runtime = getRuntime(ctx.modelRegistry);
+    await closeProviderSessions();
+    bindRuntimeProfile(runtime, agentDir, profile);
+    await importMissingAccountKey(runtime, agentDir, profile);
+  };
+  const restorePair = async (ctx: ExtensionContext, pair: ModelEffortPreference | undefined) => {
+    const model = pair
+      ? ctx.modelRegistry
+          .getAvailable()
+          .find((candidate) => candidate.provider === pair.provider && candidate.id === pair.model)
+      : undefined;
+    if (model && pair) {
+      const restored = await applyModelEffortPair(pi, ctx, model, pair.thinking);
+      if (restored) return;
+    }
+    await applyDefault(ctx, activeProfile);
+  };
+
+  installRuntimeAdapters({
+    agentDir,
+    getProfile: () => activeProfile,
+    getPreference: (profile) => readProfileDefault(agentDir, profile),
+    savePreference: (profile, preference) => writeProfileDefault(agentDir, profile, preference),
+    openPicker: async (ctx, initialSearchInput) => {
+      const result = await showModelEffortPicker({
+        ctx,
+        profile: activeProfile,
+        defaultPair: readProfileDefault(agentDir, activeProfile),
+        recent: readRecentUsage(agentDir, activeProfile),
+        initialSearchInput,
+        providers: providersFor(activeProfile),
+      });
+      if (!result) return;
+      const applied = await applyModelEffortPair(pi, ctx, result.pair.modelObject, result.pair.thinking);
+      if (!applied) throw new Error(`Could not select ${result.pair.provider}/${result.pair.model}.`);
+      if (result.save) {
+        writeProfileDefault(agentDir, activeProfile, applied);
+        ctx.ui.notify(
+          `Saved ${activeProfile} default: ${applied.provider}/${applied.model}:${applied.thinking}`,
+          "info",
+        );
+      }
+    },
+  });
+
+  /** Switch accounts, applying the destination default and rolling back as one operation. */
   const switchProfile = async (
     ctx: ExtensionContext,
     profile: ProfileName,
     login?: (ctx: ExtensionContext) => Promise<void>,
   ) => {
-    if (ctx.model && providerAllowed(activeProfile, ctx.model.provider)) remembered.set(activeProfile, ctx.model);
     const previousProfile = activeProfile;
-    try {
-      await prepareProfile(ctx, profile);
-      await refreshProfile(ctx, profile);
-      if (login) {
-        await login(ctx);
-        await refreshProfile(ctx, profile);
-      }
-      await applyDefault(ctx, profile);
-      await ensureModel(ctx);
-    } catch (error) {
-      activeProfile = previousProfile;
-      bindRuntimeProfile(getRuntime(ctx.modelRegistry), agentDir, previousProfile);
-      await refreshProfile(ctx, previousProfile).catch(() => {});
-      const reason = error instanceof Error && error.message ? error.message : `Could not switch to ${profile}.`;
+    const previousPair = currentPair(ctx);
+    const switched = await runProfileSwitchTransaction({
+      previousProfile,
+      targetProfile: profile,
+      prepare: (target) => prepareProfile(ctx, target),
+      refresh: (target) => refreshProfile(ctx, target),
+      login: login ? () => login(ctx) : undefined,
+      applyDefault: (target) => applyDefault(ctx, target),
+      rollback: (target) => {
+        activeProfile = target;
+        bindRuntimeProfile(getRuntime(ctx.modelRegistry), agentDir, target);
+      },
+      restorePair: () => restorePair(ctx, previousPair),
+    });
+    if ("error" in switched) {
+      const reason =
+        switched.error instanceof Error && switched.error.message
+          ? switched.error.message
+          : `Could not switch to ${profile}.`;
       ctx.ui.notify(`Staying on ${previousProfile}. ${reason}`, "error");
+      setStatus(ctx);
       return false;
     }
-    process.env.PI_AUTH_PROFILE = profile; // spawned Pi/subagents inherit this session's profile
+    process.env.PI_AUTH_PROFILE = profile;
     writeActiveProfile(agentDir, profile);
     setStatus(ctx);
     pi.events.emit("auth-profile:changed", { profile });
     return true;
   };
 
-  pi.on("session_start", (event, ctx) => {
-    // Only auto-select on process startup. /reload, /new, and session switches
-    // retain a manual selection; directory selection never changes the saved default.
-    const startup = event.reason === "startup";
-    const inheritedProfile = process.env.PI_AUTH_PROFILE;
-    if (startup) activeProfile = profileForDirectory(ctx.cwd) ?? activeProfile;
-    // pi-subagents and other spawned Pi processes inherit PI_AUTH_PROFILE. Their
-    // launcher may already have selected a model, which must win over the default.
-    const launchModel = startup ? inheritedLaunchModel(ctx.model, activeProfile, inheritedProfile) : undefined;
-    ensureProfileFiles(agentDir);
-    bindRuntimeProfile(getRuntime(ctx.modelRegistry), agentDir, activeProfile);
-    process.env.PI_AUTH_PROFILE = activeProfile;
-    setStatus(ctx);
-    refreshRegistryInBackground(
-      ctx.modelRegistry,
-      providersFor(activeProfile),
-      async () => {
-        await closeProviderSessions();
-        await importMissingAccountKey(getRuntime(ctx.modelRegistry), agentDir, activeProfile);
-      },
-      5_000,
-      async () => {
-        if (!shutdown.signal.aborted && !busy) {
-          if (startup) await applyDefault(ctx, activeProfile, launchModel).catch(() => {});
-          await ensureModel(ctx).catch((error: Error) => ctx.ui.notify(error.message, "error"));
+  pi.on("session_start", async (event, ctx) => {
+    try {
+      const startupProfile = event.reason === "startup" ? profileForDirectory(ctx.cwd) : undefined;
+      if (!inheritedProfile && startupProfile && startupProfile !== activeProfile) {
+        await prepareProfile(ctx, startupProfile);
+        await refreshProfile(ctx, startupProfile);
+      } else {
+        const runtime = getRuntime(ctx.modelRegistry);
+        if (runtimeStore(runtime).authPath !== profileAuthPath(agentDir, activeProfile)) {
+          await prepareProfile(ctx, activeProfile);
+          await refreshProfile(ctx, activeProfile);
         }
-      },
-    );
+      }
+      process.env.PI_AUTH_PROFILE = activeProfile;
+      setStatus(ctx);
+
+      const preserve = shouldPreserveSessionPair(event.reason, {
+        explicitPair: startupHasExplicitPair,
+        restoresSession: startupRestoresSession,
+        inheritedProfile: inheritedProfile === activeProfile,
+      });
+      if (event.reason === "new" || !preserve) {
+        await applyDefault(ctx, activeProfile);
+      } else {
+        if (event.reason === "startup" && startupHasExplicitPair && !startupExplicitThinking && ctx.model) {
+          await applyModelEffortPair(pi, ctx, ctx.model, readProfileDefault(agentDir, activeProfile).thinking);
+        }
+        await ensurePair(ctx);
+      }
+    } catch (error) {
+      ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+    }
   });
   pi.on("session_shutdown", () => {
     shutdown.abort();
   });
   pi.on("before_agent_start", async (_event, ctx) => {
-    await ensureModel(ctx);
+    await ensurePair(ctx);
+    usageRecorder.markPending();
+  });
+  pi.on("before_provider_request", (_event, ctx) => {
+    try {
+      usageRecorder.recordBeforeProvider(ctx);
+    } catch {
+      // Recency is helpful metadata and must never block a provider request.
+    }
+  });
+  pi.on("agent_end", () => {
+    usageRecorder.cancel();
   });
 
   pi.registerCommand("profile", {
-    description: "Switch work/personal accounts and the native model picker",
+    description: "Switch work/personal accounts and apply that profile's model/effort default",
     getArgumentCompletions: (prefix) =>
       [...PROFILE_NAMES, "status"].filter((v) => v.startsWith(prefix)).map((value) => ({ value, label: value })),
     handler: async (args, ctx) => {
@@ -515,7 +593,8 @@ export default function authProfiles(pi: ExtensionAPI) {
           if (!account) return;
           if (account.profile === activeProfile) {
             await loginAccount(account, ctx);
-            await ensureModel(ctx);
+            await refreshProfile(ctx, activeProfile);
+            await ensurePair(ctx);
             continue;
           }
           if (
@@ -541,4 +620,4 @@ export default function authProfiles(pi: ExtensionAPI) {
   });
 }
 
-export const _test = { installStartupProfileBinding, refreshRegistryInBackground };
+export const _test = { installStartupProfileBinding };

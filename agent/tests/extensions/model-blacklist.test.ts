@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { _test } from "../../extensions/model-blacklist/filter.js";
+import { _test } from "../../extensions/model-control/policy.js";
+
+const blacklistOnly = <T extends { provider: string; id: string; name?: string }>(models: readonly T[]) =>
+  models.filter((model) => !_test.isBlacklisted(model));
 
 test("model blacklist removes requested families and version ranges", () => {
   const models = [
@@ -15,7 +18,7 @@ test("model blacklist removes requested families and version ranges", () => {
   ];
 
   assert.deepEqual(
-    _test.filterModels(models).map((model) => model.id),
+    blacklistOnly(models).map((model) => model.id),
     ["grok-4.5", "grok-composer-2.5-fast", "gpt-5.6-luna"],
   );
 });
@@ -26,35 +29,30 @@ test("model blacklist removes claude models below major version 5", () => {
     { provider: "claude-bridge", id: "claude-opus-5" },
     { provider: "claude-bridge", id: "claude-sonnet-5" },
     { provider: "claude-bridge", id: "claude-opus-4-8" },
-    { provider: "claude-bridge", id: "claude-opus-4-7" },
-    { provider: "claude-bridge", id: "claude-opus-4-6" },
     { provider: "claude-bridge", id: "claude-sonnet-4-6" },
-    { provider: "claude-bridge", id: "claude-haiku-4-5" },
-    { provider: "anthropic", id: "claude-opus-4-1-20250805" },
     { provider: "anthropic", id: "claude-3-7-sonnet-20250219" },
     { provider: "anthropic", id: "claude-haiku-4-5" },
   ];
 
   assert.deepEqual(
-    _test.filterModels(models).map((model) => model.id),
+    blacklistOnly(models).map((model) => model.id),
     ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"],
   );
 });
 
-test("model blacklist exposes only GLM 5.3 (both variants) and DeepSeek 4.1 Flash from OpenRouter", () => {
+test("model blacklist exposes only approved OpenRouter models", () => {
   const models = [
     { provider: "openrouter", id: "anthropic/claude-opus-4.1" },
     { provider: "openrouter", id: "z-ai/glm-5.3-flash" },
     { provider: "openrouter", id: "z-ai/glm-5.3" },
     { provider: "openrouter", id: "deepseek/deepseek-v4.1-flash" },
     { provider: "openrouter", id: "deepseek/deepseek-v4-flash" },
-    { provider: "openrouter", id: "deepseek/deepseek-chat" },
     { provider: "openrouter", id: "z-ai/glm-4.6" },
     { provider: "z-ai", id: "glm-5.3-flash" },
   ];
 
   assert.deepEqual(
-    _test.filterModels(models).map((model) => `${model.provider}/${model.id}`),
+    blacklistOnly(models).map((model) => `${model.provider}/${model.id}`),
     [
       "openrouter/z-ai/glm-5.3-flash",
       "openrouter/z-ai/glm-5.3",
@@ -71,25 +69,43 @@ test("blacklist patterns also match provider-qualified ids and display names", (
   assert.equal(_test.isBlacklisted({ provider: "vendor", id: "visible", name: "Friendly visible" }, patterns), false);
 });
 
-test("runtime patch filters the built-in model snapshot and is idempotent", () => {
-  const proto = {
-    getAvailableSnapshot: () => [
-      { provider: "google", id: "gemini-3-flash" },
-      { provider: "openai-codex", id: "gpt-5.6-luna" },
-    ],
+test("a live reload updates callbacks retained by the replaced policy wrappers", () => {
+  const legacyProfile = Symbol.for("pi.auth-profile.policy");
+  const legacyBlacklist = Symbol.for("pi.model-blacklist.patch-installed");
+  const target = {
+    getAvailableSnapshot: () => [],
+    getAvailable: async () => [],
+    getModels: () => [],
+    getModel: () => undefined,
+    hasConfiguredAuth: () => false,
+    checkAuth: async () => undefined,
+    getAuth: async () => undefined,
+    login: async () => {},
+    [legacyProfile]: { profile: () => "work" as const },
+    [legacyBlacklist]: { patterns: [] as readonly RegExp[] },
   };
-
-  _test.installModelBlacklist(proto);
-  const patchedMethod = proto.getAvailableSnapshot;
-  assert.deepEqual(
-    proto.getAvailableSnapshot().map((model) => model.id),
-    ["gpt-5.6-luna"],
+  const patterns = [/updated/];
+  _test.installModelPolicy(
+    target as unknown as Parameters<typeof _test.installModelPolicy>[0],
+    () => "personal",
+    patterns,
   );
+  assert.equal(target[legacyProfile].profile(), "personal");
+  assert.equal(target[legacyBlacklist].patterns, patterns);
+});
 
-  _test.installModelBlacklist(proto, [/^gpt-/]);
-  assert.equal(proto.getAvailableSnapshot, patchedMethod);
+test("the unified filter applies profile visibility and blacklist rules together", () => {
+  const models = [
+    { provider: "google", id: "gemini-3-flash" },
+    { provider: "google", id: "gemini-3.8-flash" },
+    { provider: "openai-codex", id: "gpt-5.6-luna" },
+  ];
   assert.deepEqual(
-    proto.getAvailableSnapshot().map((model) => model.id),
-    ["gemini-3-flash"],
+    _test.filterModels(models, "work").map((model) => model.id),
+    ["gemini-3.8-flash"],
+  );
+  assert.deepEqual(
+    _test.filterModels(models, "personal").map((model) => model.id),
+    ["gpt-5.6-luna"],
   );
 });

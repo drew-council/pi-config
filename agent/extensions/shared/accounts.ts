@@ -19,22 +19,6 @@ export const providersFor = (profile: ProfileName): string[] =>
 export const providerAllowed = (profile: ProfileName, provider: string): boolean =>
   providersFor(profile).includes(provider);
 
-export type ProfileThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
-export type ProfileDefault = { provider: string; model: string; thinking: ProfileThinkingLevel };
-/**
- * Startup model and thinking level per profile. Applied when a session starts
- * and on /profile switches; a model chosen manually in a profile during this
- * session still wins over the saved default.
- */
-export const PROFILE_DEFAULTS: Record<ProfileName, ProfileDefault> = {
-  work: { provider: "claude-bridge", model: "claude-opus-5", thinking: "medium" },
-  personal: { provider: "openrouter", model: "z-ai/glm-5.3-flash", thinking: "high" },
-};
-/** The profile's saved default when it appears among `models` (call with available, profile-allowed models). */
-export function profileDefaultModel(models: readonly Model<Api>[], profile: ProfileName): Model<Api> | undefined {
-  const wanted = PROFILE_DEFAULTS[profile];
-  return models.find((model) => model.provider === wanted.provider && model.id === wanted.model);
-}
 export const isProfileName = (value: unknown): value is ProfileName => value === "work" || value === "personal";
 export const profileAuthPath = (agentDir: string, profile: ProfileName) =>
   join(agentDir, "auth-profiles", `${profile}.json`);
@@ -242,27 +226,10 @@ type RuntimeInternals = { credentials: { store: FileStore; overrides: Map<string
 export function runtimeStore(runtime: ModelRuntime): FileStore {
   const store = (runtime as unknown as RuntimeInternals).credentials?.store;
   if (typeof store?.constructor.create !== "function" || typeof store.modify !== "function") {
-    throw new Error("Pi's credential-store API changed; update the auth-profiles adapter before logging in.");
+    throw new Error("Pi's credential-store API changed; update model-control before logging in.");
   }
   return store;
 }
-const DEFAULT_AUTH_FILE = "auth.json";
-
-/**
- * Binds the active profile's credential store, but only when the runtime still
- * points at the untouched default auth.json. Runs during extension loading so
- * pi's post-extension-load availability refresh (which computes the startup
- * model list before any session_start handler) sees profile credentials;
- * explicit binds from session_start, /profile and /log-me-in always win.
- */
-export function bindStartupProfile(runtime: ModelRuntime, agentDir: string): boolean {
-  const store = runtimeStore(runtime);
-  if (store.authPath !== join(agentDir, DEFAULT_AUTH_FILE)) return false;
-  ensureProfileFiles(agentDir);
-  bindRuntimeProfile(runtime, agentDir, readActiveProfile(agentDir));
-  return true;
-}
-
 export function bindRuntimeProfile(runtime: ModelRuntime, agentDir: string, profile: ProfileName): void {
   const store = runtimeStore(runtime);
   const credentials = (runtime as unknown as RuntimeInternals).credentials;

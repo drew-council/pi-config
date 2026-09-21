@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "profiles": {
+    "work": {
+      "provider": "claude-bridge",
+      "model": "claude-opus-5",
+      "thinking": "medium"
+    },
+    "personal": {
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "thinking": "high"
+    }
+  }
+}
