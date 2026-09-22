@@ -1,5 +1,6 @@
 import * as path from "node:path";
-import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { type ReviewFn, type ReviewVerdict, reviewWithModel } from "./review.js";
 
 type ShellToken = { type: "word" | "control"; value: string };
 
@@ -202,14 +203,32 @@ function hasAiAttribution(command: string): boolean {
   return AI_ATTRIBUTION_PATTERNS.some((pattern) => pattern.test(command));
 }
 
+const SUDO_REASON =
+  "sudo is never allowed here and no approval prompt will be shown. Do not retry with sudo; if elevated privileges are genuinely required, explain to the user what they should run themselves.";
+
+/** How long the background reviewer may take before the decision is left to the user alone. */
+const REVIEW_TIMEOUT_MS = 30_000;
+
+export type SecurityOptions = {
+  /** Background reviewer used for confirm-style bash gates. Defaults to the profile's cheap model. */
+  review?: ReviewFn;
+};
+
+type BlockResult = { block: true; reason: string };
+
 /**
  * Comprehensive security hook:
- * - Blocks dangerous bash commands (rm -rf, sudo, chmod 777, etc.)
+ * - Hard-blocks sudo, AI co-author attribution, and bash writes to secrets
+ * - Confirms dangerous bash commands (rm -rf, git reset --hard, force push, ...) with the user,
+ *   while a cheap reviewer model checks the transcript in the background and auto-approves
+ *   commands that are clearly safe (scratch dirs under /tmp, deletions the user asked for, ...)
  * - Protects sensitive paths from writes (.env, node_modules, .git, keys)
  */
-export default function (pi: ExtensionAPI) {
+export function createSecurityExtension(pi: ExtensionAPI, options: SecurityOptions = {}) {
+  const review: ReviewFn =
+    options.review ?? ((ctx, request, signal) => reviewWithModel(ctx, request, signal, getAgentDir()));
+
   const dangerousCommands = [
-    { pattern: /\bsudo\b/, desc: "sudo command" },
     { pattern: /\b(chmod|chown)\b.*777/, desc: "dangerous permissions" },
     { pattern: /\bmkfs\b/, desc: "filesystem format" },
     { pattern: /\bdd\b.*\bof=\/dev\//, desc: "raw device write" },
@@ -253,14 +272,57 @@ export default function (pi: ExtensionAPI) {
     new RegExp(String.raw`\bcat\b[^;&|]*(?:>|>>)\s*${protectedShellPath}`),
   ];
 
-  async function confirmCommand(
-    ctx: { ui: { confirm(title: string, message: string): Promise<boolean> } },
-    title: string,
-    command: string,
-  ): Promise<boolean> {
+  const errorMessage = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+  /**
+   * Gate a dangerous command. Headless: the reviewer decides. Interactive: the
+   * user sees a confirm dialog immediately; if the reviewer approves first, the
+   * dialog is dismissed and the command runs.
+   */
+  async function guardCommand(ctx: ExtensionContext, desc: string, command: string): Promise<BlockResult | undefined> {
+    const request = { command, cwd: ctx.cwd, gate: desc };
+
+    if (!ctx.hasUI) {
+      try {
+        const verdict = await review(ctx, request, AbortSignal.timeout(REVIEW_TIMEOUT_MS));
+        if (verdict.decision === "approve") return undefined;
+        return { block: true, reason: `Blocked ${desc} (no UI to confirm; reviewer: ${verdict.reason})` };
+      } catch (error) {
+        return {
+          block: true,
+          reason: `Blocked ${desc} (no UI to confirm; reviewer unavailable: ${errorMessage(error)})`,
+        };
+      }
+    }
+
+    const reviewer = new AbortController();
+    const dialog = new AbortController();
+    let autoApproved: ReviewVerdict | undefined;
+    // Runs concurrently with the dialog; errors surface as a notification only.
+    void review(ctx, request, AbortSignal.any([reviewer.signal, AbortSignal.timeout(REVIEW_TIMEOUT_MS)]))
+      .then((verdict) => {
+        if (reviewer.signal.aborted) return;
+        if (verdict.decision === "approve") {
+          autoApproved = verdict;
+          dialog.abort();
+        } else {
+          ctx.ui.notify(`Reviewer wants your decision: ${verdict.reason}`, "warning");
+        }
+      })
+      .catch((error) => {
+        if (!reviewer.signal.aborted) ctx.ui.notify(`Command reviewer unavailable: ${errorMessage(error)}`, "warning");
+      });
+
     pi.events.emit("herdr:blocked", { active: true, label: "Waiting for command confirmation" });
     try {
-      return await ctx.ui.confirm(title, command);
+      const ok = await ctx.ui.confirm(`Dangerous command: ${desc}`, command, { signal: dialog.signal });
+      reviewer.abort();
+      if (autoApproved) {
+        ctx.ui.notify(`Auto-approved ${desc}: ${autoApproved.reason}`, "info");
+        return undefined;
+      }
+      if (!ok) return { block: true, reason: `Blocked ${desc} by user` };
+      return undefined;
     } finally {
       pi.events.emit("herdr:blocked", { active: false });
     }
@@ -270,19 +332,14 @@ export default function (pi: ExtensionAPI) {
     if (event.toolName === "bash") {
       const command = event.input.command as string;
 
+      if (/\bsudo\b/.test(command)) {
+        if (ctx.hasUI) ctx.ui.notify("Blocked sudo command (never allowed)", "warning");
+        return { block: true, reason: SUDO_REASON };
+      }
+
       if (hasUnsafeRecursiveRm(command, ctx.cwd)) {
-        if (!ctx.hasUI) {
-          return {
-            block: true,
-            reason: "Blocked recursive delete (no UI to confirm)",
-          };
-        }
-
-        const ok = await confirmCommand(ctx, "Dangerous command: recursive delete", command);
-
-        if (!ok) {
-          return { block: true, reason: "Blocked recursive delete by user" };
-        }
+        const blocked = await guardCommand(ctx, "recursive delete", command);
+        if (blocked) return blocked;
       }
 
       if (hasAiAttribution(command)) {
@@ -296,18 +353,8 @@ export default function (pi: ExtensionAPI) {
 
       for (const { pattern, desc } of dangerousCommands) {
         if (pattern.test(command)) {
-          if (!ctx.hasUI) {
-            return {
-              block: true,
-              reason: `Blocked ${desc} (no UI to confirm)`,
-            };
-          }
-
-          const ok = await confirmCommand(ctx, `Dangerous command: ${desc}`, command);
-
-          if (!ok) {
-            return { block: true, reason: `Blocked ${desc} by user` };
-          }
+          const blocked = await guardCommand(ctx, desc, command);
+          if (blocked) return blocked;
           break;
         }
       }
@@ -360,4 +407,8 @@ export default function (pi: ExtensionAPI) {
 
     return undefined;
   });
+}
+
+export default function (pi: ExtensionAPI) {
+  createSecurityExtension(pi);
 }

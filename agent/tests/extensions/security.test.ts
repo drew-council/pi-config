@@ -2,26 +2,35 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
+import type { ReviewFn, ReviewVerdict } from "../../extensions/security/review.js";
 
 // This hook only classifies paths; it never reads/writes the real agent directory.
 // Avoid replacing the entire SDK module for every other test in Bun's process.
 const TEST_AGENT_DIR = getAgentDir();
-const { default: securityExtension } = await import("../../extensions/security.js");
+const { createSecurityExtension } = await import("../../extensions/security/index.js");
 
 type ToolCallResult = { block: true; reason: string } | undefined;
+type ConfirmOptions = { signal?: AbortSignal } | undefined;
 type ToolCallHandler = (
   event: { toolName: string; input: Record<string, unknown> },
   ctx: {
     cwd: string;
     hasUI: boolean;
     ui: {
-      confirm(title: string, message: string): Promise<boolean>;
+      confirm(title: string, message: string, opts?: ConfirmOptions): Promise<boolean>;
       notify(message: string, level: string): void;
     };
   },
 ) => Promise<ToolCallResult>;
 
-function registerSecurityHook(emittedEvents: Array<{ name: string; data: unknown }> = []): ToolCallHandler {
+const noReviewer: ReviewFn = async () => {
+  throw new Error("no reviewer in test");
+};
+
+function registerSecurityHook(
+  emittedEvents: Array<{ name: string; data: unknown }> = [],
+  review: ReviewFn = noReviewer,
+): ToolCallHandler {
   let handler: ToolCallHandler | undefined;
   const pi = {
     events: {
@@ -34,12 +43,17 @@ function registerSecurityHook(emittedEvents: Array<{ name: string; data: unknown
     },
   };
 
-  securityExtension(pi as unknown as ExtensionAPI);
+  createSecurityExtension(pi as unknown as ExtensionAPI, { review });
   assert.ok(handler, "security extension should register a tool_call hook");
   return handler;
 }
 
-function context(options: { cwd?: string; hasUI?: boolean; confirm?: boolean } = {}) {
+/**
+ * `confirm: undefined` leaves the dialog open until its signal aborts, which
+ * mirrors Pi resolving `false` when an extension dismisses the dialog. A
+ * function simulates a user who answers after some delay.
+ */
+function context(options: { cwd?: string; hasUI?: boolean; confirm?: boolean | (() => Promise<boolean>) } = {}) {
   const confirmations: Array<{ title: string; message: string }> = [];
   const notifications: Array<{ message: string; level: string }> = [];
   return {
@@ -49,9 +63,13 @@ function context(options: { cwd?: string; hasUI?: boolean; confirm?: boolean } =
       cwd: options.cwd ?? "/workspace/project",
       hasUI: options.hasUI ?? false,
       ui: {
-        async confirm(title: string, message: string) {
+        confirm(title: string, message: string, opts?: ConfirmOptions) {
           confirmations.push({ title, message });
-          return options.confirm ?? false;
+          if (typeof options.confirm === "function") return options.confirm();
+          if (options.confirm !== undefined) return Promise.resolve(options.confirm);
+          return new Promise<boolean>((resolve) => {
+            opts?.signal?.addEventListener("abort", () => resolve(false), { once: true });
+          });
         },
         notify(message: string, level: string) {
           notifications.push({ message, level });
@@ -68,6 +86,10 @@ async function runBash(handler: ToolCallHandler, command: string, ctx = context(
 async function runWrite(handler: ToolCallHandler, filePath: string, ctx = context().ctx) {
   return handler({ toolName: "write", input: { path: filePath } }, ctx);
 }
+
+const verdict =
+  (decision: ReviewVerdict["decision"], reason = "test verdict"): ReviewFn =>
+  async () => ({ decision, reason });
 
 test("recursive delete protection distinguishes verified temporary paths from unsafe targets", async () => {
   const handler = registerSecurityHook();
@@ -91,7 +113,10 @@ test("dangerous commands require an affirmative UI confirmation", async () => {
   const handler = registerSecurityHook();
 
   const headless = await runBash(handler, "git reset --hard HEAD");
-  assert.equal(headless?.reason, "Blocked destructive git reset (no UI to confirm)");
+  assert.equal(
+    headless?.reason,
+    "Blocked destructive git reset (no UI to confirm; reviewer unavailable: no reviewer in test)",
+  );
 
   const denied = context({ hasUI: true, confirm: false });
   assert.equal(
@@ -103,7 +128,7 @@ test("dangerous commands require an affirmative UI confirmation", async () => {
   const emittedEvents: Array<{ name: string; data: unknown }> = [];
   const eventHandler = registerSecurityHook(emittedEvents);
   const eventContext = context({ hasUI: true, confirm: true });
-  assert.equal(await runBash(eventHandler, "sudo reboot", eventContext.ctx), undefined);
+  assert.equal(await runBash(eventHandler, "git push --force origin main", eventContext.ctx), undefined);
   assert.deepEqual(emittedEvents, [
     { name: "herdr:blocked", data: { active: true, label: "Waiting for command confirmation" } },
     { name: "herdr:blocked", data: { active: false } },
@@ -112,6 +137,96 @@ test("dangerous commands require an affirmative UI confirmation", async () => {
   const approved = context({ hasUI: true, confirm: true });
   assert.equal(await runBash(handler, "git reset --hard HEAD", approved.ctx), undefined);
   assert.equal(approved.confirmations.length, 1);
+});
+
+test("sudo is always hard-blocked without a prompt", async () => {
+  const handler = registerSecurityHook([], verdict("approve"));
+
+  const interactive = context({ hasUI: true, confirm: true });
+  const blocked = await runBash(handler, "sudo reboot", interactive.ctx);
+  assert.match(blocked?.reason ?? "", /sudo is never allowed/);
+  assert.equal(interactive.confirmations.length, 0);
+  assert.equal(interactive.notifications[0]?.level, "warning");
+
+  assert.match((await runBash(handler, "sudo rm -rf /tmp/x"))?.reason ?? "", /sudo is never allowed/);
+});
+
+test("the background reviewer dismisses the dialog when it approves", async () => {
+  const seen: Array<{ command: string; gate: string; cwd: string }> = [];
+  const handler = registerSecurityHook([], async (_ctx, request) => {
+    seen.push(request);
+    return { decision: "approve", reason: "scratch dir under /tmp" };
+  });
+
+  const pending = context({ hasUI: true });
+  assert.equal(await runBash(handler, "cd /tmp && rm -rf scratch", pending.ctx), undefined);
+  assert.equal(pending.confirmations.length, 1);
+  assert.deepEqual(seen, [
+    { command: "cd /tmp && rm -rf scratch", gate: "recursive delete", cwd: "/workspace/project" },
+  ]);
+  assert.deepEqual(pending.notifications, [
+    { message: "Auto-approved recursive delete: scratch dir under /tmp", level: "info" },
+  ]);
+});
+
+test("the background reviewer leaves the decision to the user when unsure", async () => {
+  const handler = registerSecurityHook([], verdict("ask_user", "target is a source tree"));
+
+  const denied = context({ hasUI: true, confirm: false });
+  assert.equal((await runBash(handler, "rm -rf src", denied.ctx))?.reason, "Blocked recursive delete by user");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(denied.notifications, [
+    { message: "Reviewer wants your decision: target is a source tree", level: "warning" },
+  ]);
+
+  const approved = context({ hasUI: true, confirm: true });
+  assert.equal(await runBash(handler, "rm -rf src", approved.ctx), undefined);
+});
+
+test("a user answer cancels the background review", async () => {
+  let reviewSignal: AbortSignal | undefined;
+  const handler = registerSecurityHook([], (_ctx, _request, signal) => {
+    reviewSignal = signal;
+    return new Promise<ReviewVerdict>((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+    });
+  });
+
+  const approved = context({ hasUI: true, confirm: true });
+  assert.equal(await runBash(handler, "rm -rf src", approved.ctx), undefined);
+  assert.equal(reviewSignal?.aborted, true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(approved.notifications, []);
+});
+
+test("reviewer failures only notify while the dialog stays open", async () => {
+  const handler = registerSecurityHook([], async () => {
+    throw new Error("model offline");
+  });
+
+  const slowUser = () => new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5));
+  const denied = context({ hasUI: true, confirm: slowUser });
+  assert.equal((await runBash(handler, "rm -rf src", denied.ctx))?.reason, "Blocked recursive delete by user");
+  assert.deepEqual(denied.notifications, [
+    { message: "Command reviewer unavailable: model offline", level: "warning" },
+  ]);
+
+  // Once the user has answered, a late failure is not worth a notification.
+  const quickUser = context({ hasUI: true, confirm: false });
+  assert.equal((await runBash(handler, "rm -rf src", quickUser.ctx))?.reason, "Blocked recursive delete by user");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(quickUser.notifications, []);
+});
+
+test("without a UI the reviewer decides", async () => {
+  const approving = registerSecurityHook([], verdict("approve", "user asked for it"));
+  assert.equal(await runBash(approving, "rm -rf build"), undefined);
+
+  const unsure = registerSecurityHook([], verdict("ask_user", "target not mentioned"));
+  assert.equal(
+    (await runBash(unsure, "rm -rf build"))?.reason,
+    "Blocked recursive delete (no UI to confirm; reviewer: target not mentioned)",
+  );
 });
 
 test("write protection covers secrets and lockfiles while allowing intentional package patches", async () => {
