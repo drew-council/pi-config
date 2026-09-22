@@ -1,0 +1,170 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 62e2b16..bd8a137 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,9 @@
+ 
+ ## UNRELEASED
+ 
++- **Add: claude-opus-5-5 model** — Claude Opus 5.5 (released 2026-09-22) is selectable via `/model` and the `opus` shortcut now resolves to it. pi-ai (≤0.87.0) does not list it yet, so `withCatalogFallbacks` synthesizes the entry from `claude-opus-5` until it does, then steps aside. Measured on Max via CC 2.1.280: bare and `[1m]` both serve 1M, so it joins the measured-1M set.
++- **Bump: @anthropic-ai/claude-agent-sdk ^0.3.280** — bundles Claude Code 2.1.280; older CC rejects Opus 5.5 with `400 ... version 2.1.280 or newer is required`.
++
+ - **Fix: pi 0.86 transcript contract (issue #106)** — 0.86 folds the system prompt and tool set into `role:"system"` messages instead of `context.systemPrompt`/`context.tools`, so every fresh session took the rebuild path with zero records and `--resume` failed with "No conversation found with session ID". A new `src/transcript.ts` replays the transcript back into the 0.85-shaped `Context` at the stream entry points (and filters system messages in `syncSharedSession`), which also repairs what else 0.86 silently broke: skills/context files not projected to Claude Code (prompt capture resolved nothing), MCP tools never served, compaction and branch summaries throwing on their `[system,user]` context, and cursor arithmetic counting system messages. Sections are re-emitted in pi's canonical render order so the replayed prompt still matches the key prompt capture recorded (a section deleted and re-added — skills while `read`+`bash` are disabled — would otherwise land at the Map tail and fail every later turn). Mid-conversation system messages stay in the transcript space, never enter CC sessions, and the 0.85 path is byte-identical to before.
+ - **Fix: pi 0.86 /bug summarization routes through the provider** — 0.86 added `summarizeForBugReport` as a fourth `streamFn` consumer (the streamFn inventory canary caught it at bump time). `runIsolatedSummary` now routes any one-off summarizer call — pi marks them all `cacheRetention: "none"` in `completeSummarization` — instead of requiring the exact compaction `[system,user]` shape, so a future summarizer consumer needs no bridge change. The bug-report prompt reaches CC as its systemPrompt.
+ 
+diff --git a/package.json b/package.json
+index b776a5e..97260d9 100644
+--- a/package.json
++++ b/package.json
+@@ -33,7 +33,7 @@
+   },
+   "type": "module",
+   "dependencies": {
+-    "@anthropic-ai/claude-agent-sdk": "^0.3.267",
++    "@anthropic-ai/claude-agent-sdk": "^0.3.280",
+     "@modelcontextprotocol/sdk": "^1.29.0",
+     "cc-session-io": "^0.4.0",
+     "change-case": "^5.4.4"
+diff --git a/src/index.ts b/src/index.ts
+index 9ee2712..49c691a 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -11,7 +11,7 @@ import { appendFileSync, mkdirSync, realpathSync, statSync } from "fs";
+ import { homedir } from "os";
+ import { dirname, join } from "path";
+ import { PROVIDER_ID, messageContentToText, convertPiMessages } from "./convert.js";
+-import { applyLongContext, buildModels, claudeCodeModelId, type LongContextSettings, resolveModel as _resolveModel } from "./models.js";
++import { applyLongContext, buildModels, claudeCodeModelId, type LongContextSettings, resolveModel as _resolveModel, withCatalogFallbacks } from "./models.js";
+ import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, renderSkillsBlock } from "./skills.js";
+ import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.js";
+ import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
+@@ -147,7 +147,8 @@ const SDK_TO_PI_TOOL_NAME: Record<string, string> = {
+ };
+ 
+ // MODELS is buildModels(getModels("anthropic")) — projection kept in models.js.
+-const MODELS = buildModels(getModels("anthropic"));
++// withCatalogFallbacks fills in models pi-ai does not list yet (no-op once it does).
++const MODELS = buildModels(withCatalogFallbacks(getModels("anthropic")));
+ let providerSettings: NonNullable<Config["provider"]> = {};
+ let longContextSettings: LongContextSettings = { plan: "pro", longContextExtraUsage: false };
+ 
+diff --git a/src/models.ts b/src/models.ts
+index f6f6b53..ae0b489 100644
+--- a/src/models.ts
++++ b/src/models.ts
+@@ -19,6 +19,27 @@ function isDatedAlias(id: string): boolean {
+ // sink below all known ones.
+ const FAMILY_ORDER = ["fable", "opus", "sonnet", "haiku"];
+ 
++// Models Anthropic has shipped that the running pi-ai catalog may not list yet.
++// Each is synthesized from a base catalog entry only when the catalog lacks the
++// id, so an entry here becomes a no-op once pi-ai ships the model itself.
++// Applied to the raw catalog before buildModels (see MODELS in index.ts).
++const CATALOG_FALLBACKS: ReadonlyArray<{ id: string; name: string; basedOn: string }> = [
++	// Claude Opus 5.5 (2026-09-22): 1M context, 128K output, adaptive thinking
++	// always on — same shape as Opus 5 (platform.claude.com/docs/en/models/opus-5-5/overview).
++	{ id: "claude-opus-5-5", name: "Claude Opus 5.5", basedOn: "claude-opus-5" },
++];
++
++export function withCatalogFallbacks<T extends { id: string; [key: string]: any }>(piAiModels: T[]): T[] {
++	const out = [...piAiModels];
++	for (const fallback of CATALOG_FALLBACKS) {
++		if (out.some((m) => m.id === fallback.id)) continue;
++		const base = out.find((m) => m.id === fallback.basedOn);
++		if (!base) continue;
++		out.push({ ...base, id: fallback.id, name: fallback.name });
++	}
++	return out;
++}
++
+ // Project pi-ai's model entries down to the fields pi's registerProvider expects,
+ // newest generation first. Context-dependent display labels are applied after
+ // plan/long-context config is known.
+@@ -81,6 +102,8 @@ export type ClaudeCodeRuntimeModel = {
+ const MEASURED_ONE_M = new Set([
+ 	"claude-fable-5",
+ 	"claude-fable-5-1",
++	// Measured 2026-09-22 on Max via CC 2.1.280: bare and [1m] both served 1M.
++	"claude-opus-5-5",
+ 	"claude-opus-5",
+ 	"claude-opus-4-8",
+ 	"claude-opus-4-7",
+diff --git a/tests/unit-models.mjs b/tests/unit-models.mjs
+index 520fd42..cc2fc13 100644
+--- a/tests/unit-models.mjs
++++ b/tests/unit-models.mjs
+@@ -7,7 +7,7 @@
+  */
+ import { describe, it } from "node:test";
+ import assert from "node:assert/strict";
+-import { applyLongContext, buildModels, claudeCodeModelId, resolveClaudeCodeRuntimeModel, resolveModel } from "../src/models.js";
++import { applyLongContext, buildModels, claudeCodeModelId, resolveClaudeCodeRuntimeModel, resolveModel, withCatalogFallbacks } from "../src/models.js";
+ import { getModels } from "@earendil-works/pi-ai/compat";
+ 
+ const PRO = { plan: "pro", longContextExtraUsage: false };
+@@ -31,7 +31,7 @@ const find = (models, id) => models.find((m) => m.id === id);
+ 
+ describe("MODELS projection", () => {
+ 	it("driven by pi-ai's real anthropic catalog, minus dated snapshot aliases", () => {
+-		const models = buildModels(getModels("anthropic"));
++		const models = buildModels(withCatalogFallbacks(getModels("anthropic")));
+ 		for (const m of models) {
+ 			assert.doesNotMatch(m.id, /-20\d{6}$/, "no dated snapshot ids in the picker");
+ 			assert.equal(m.baseUrl, undefined);
+@@ -42,10 +42,24 @@ describe("MODELS projection", () => {
+ 		}
+ 		// Spot-check coverage of every current family.
+ 		assert.ok(find(models, "claude-opus-5"), "opus-5 present");
++		assert.ok(find(models, "claude-opus-5-5"), "opus-5-5 present (catalog or fallback)");
+ 		assert.ok(find(models, "claude-fable-5-1"), "fable-5-1 present");
+ 		assert.ok(find(models, "claude-haiku-4-5"), "haiku present");
+ 	});
+ 
++	it("catalog fallback synthesizes opus-5-5 from opus-5 only when pi-ai lacks it", () => {
++		const synthesized = withCatalogFallbacks([oneM("claude-opus-5")]);
++		assert.deepEqual(synthesized.map((m) => m.id), ["claude-opus-5", "claude-opus-5-5"]);
++		assert.equal(find(synthesized, "claude-opus-5-5").name, "Claude Opus 5.5");
++		assert.equal(find(synthesized, "claude-opus-5-5").contextWindow, 1000000);
++
++		const catalogHasIt = withCatalogFallbacks([oneM("claude-opus-5"), mockPiAiModel("claude-opus-5-5", { name: "from pi-ai" })]);
++		assert.equal(catalogHasIt.length, 2);
++		assert.equal(find(catalogHasIt, "claude-opus-5-5").name, "from pi-ai");
++
++		assert.deepEqual(withCatalogFallbacks([oneM("claude-sonnet-5")]).map((m) => m.id), ["claude-sonnet-5"], "no base, no fallback");
++	});
++
+ 	it("sorts newest generation first within each family", () => {
+ 		const models = buildModels([
+ 			oneM("claude-opus-4-7"), oneM("claude-opus-5"),
+@@ -78,10 +92,10 @@ describe("MODELS projection", () => {
+ });
+ 
+ describe("resolveModel", () => {
+-	const models = buildModels(getModels("anthropic"));
++	const models = buildModels(withCatalogFallbacks(getModels("anthropic")));
+ 
+-	it("opus shortcut resolves to claude-opus-5 (newest opus)", () => {
+-		assert.equal(resolveModel(models, "opus")?.id, "claude-opus-5");
++	it("opus shortcut resolves to claude-opus-5-5 (newest opus)", () => {
++		assert.equal(resolveModel(models, "opus")?.id, "claude-opus-5-5");
+ 	});
+ 
+ 	it("exact id beats newer partial match (claude-fable-5 → fable-5, not 5-1)", () => {
+@@ -91,7 +105,7 @@ describe("resolveModel", () => {
+ 
+ describe("Claude Code runtime policy", () => {
+ 	it("measured-1M ids send [1m] on every plan", () => {
+-		for (const id of ["claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-fable-5", "claude-fable-5-1", "claude-sonnet-5"]) {
++		for (const id of ["claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-fable-5", "claude-fable-5-1", "claude-sonnet-5"]) {
+ 			assert.deepEqual(resolveClaudeCodeRuntimeModel(oneM(id), PRO), { cliModelId: `${id}[1m]`, contextWindow: 1000000 });
+ 		}
+ 	});
+@@ -136,7 +150,7 @@ describe("claudeCodeModelId", () => {
+ });
+ 
+ describe("applyLongContext", () => {
+-	const models = buildModels(getModels("anthropic"));
++	const models = buildModels(withCatalogFallbacks(getModels("anthropic")));
+ 
+ 	it("registers 1M for measured-1M models", () => {
+ 		const registered = applyLongContext(models, PRO);

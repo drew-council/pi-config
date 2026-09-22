@@ -6,6 +6,7 @@
 # - installs the local Bun dependency workspace under ./bun
 # - applies patch-package patches from ./patches via Bun's postinstall
 # - applies patch-package patches from ./agent/patches to Pi-managed npm packages
+# - applies git patches from ./agent/git-patches to Pi-managed git packages
 # - updates/installs Pi-managed npm packages with Bun from agent/settings.json
 # - initializes isolated work/personal accounts, reusing gh and existing Codex logins
 # - generates local personal/Sheer Health secret files from committed 1Password templates
@@ -260,6 +261,9 @@ def main [
   }
 
   apply-agent-npm-patches $bun_dir $agent_dir
+
+  say "Applying Pi-managed git package patches"
+  ^nu ($repo | path join "scripts" "patch-git-packages.nu")
 
   say "Initializing account profiles (browser logins remain available through /log-me-in)"
   ^bun --tsconfig-override ($repo | path join "tsconfig.runtime.json") ($agent_dir | path join "scripts" "setup-accounts.ts")
