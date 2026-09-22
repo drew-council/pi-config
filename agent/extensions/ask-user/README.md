@@ -17,7 +17,7 @@ High-quality video: [ask-user-demo.mp4](./media/ask-user-demo.mp4)
 - User-toggleable extra context on structured selections
 - Context display support
 - Responsive context collapse that keeps the question and choices visible on small terminals without discarding full context
-- Configurable display mode: `overlay` (modal, default) or `inline` (rendered directly in the flow)
+- Configurable display mode: `inline` (rendered in-place, pinned above the input, default) or `overlay` (centered modal)
 - Runtime overlay toggle: press the configured overlay-toggle key (`alt+o` by default, configurable per call or via env var) while the prompt is open to temporarily hide/show the popup so you can read prior agent output, then press it again to bring it back
 - Pi-TUI-aligned keybinding and editor behavior
 - Custom TUI rendering for tool calls and results
@@ -67,7 +67,7 @@ The registered tool name is:
 | `allowMultiple` | `boolean?` | `false` | Enable multi-select mode |
 | `allowFreeform` | `boolean?` | `true` | Add a "Type something" freeform option |
 | `allowComment` | `boolean?` | env var or `false` | Expose a user-toggleable extra-context option in the custom UI (`ctrl+g` or the toggle row) and collect an optional comment in fallback dialogs |
-| `displayMode` | `"overlay" \| "inline"?` | env var or `"overlay"` | Controls custom UI rendering: `overlay` shows the centered modal (current behavior), `inline` renders without overlay framing |
+| `displayMode` | — | — | *Removed.* Display mode is user-configured only, via `PI_ASK_USER_DISPLAY_MODE` (fallback default: `inline`) |
 | `singleSelectLayout` | `"auto" \| "list"?` | env var or `"auto"` | Use the responsive details pane automatically or always render descriptions below their options |
 | `overlayToggleKey` | `string?` | env var or `"alt+o"` | Shortcut for hiding/showing the overlay popup (overlay mode only). Pi-TUI key spec, e.g. `"alt+o"`, `"ctrl+shift+h"`. Pass `"off"` to disable. |
 | `commentToggleKey` | `string?` | env var or `"ctrl+g"` | Shortcut for toggling the optional comment/extra-context row when `allowComment: true`. Pass `"off"` to disable. |
@@ -87,12 +87,11 @@ Regardless of tool parameters, the user can press `Tab` on a focused option to k
   ],
   "allowMultiple": false,
   "allowFreeform": true,
-  "allowComment": true,
-  "displayMode": "inline"
+  "allowComment": true
 }
 ```
 
-`displayMode: "inline"` uses the same interaction logic but skips overlay mode when calling `ctx.ui.custom(...)`. RPC/headless fallback behavior is unchanged.
+Inline mode uses the same interaction logic but skips overlay mode when calling `ctx.ui.custom(...)`. RPC/headless fallback behavior is unchanged.
 
 ## Personal preferences via environment variables
 
@@ -110,13 +109,12 @@ Environment variables must be present in the process that launches Pi. If Pi is 
 
 ### Display mode
 
-Effective order:
+Set via `PI_ASK_USER_DISPLAY_MODE` only (there is no per-call parameter — the agent cannot override your choice):
 
-1. Per-call `displayMode` parameter (if provided)
-2. `PI_ASK_USER_DISPLAY_MODE` (if set to `"overlay"` or `"inline"`)
-3. Fallback default: `"overlay"`
+- `"inline"` *(default)*: rendered in-place above the input; scrollback stays visible
+- `"overlay"`: centered modal
 
-Unrecognised values are silently ignored and fall back to `"overlay"`.
+Unrecognised values are silently ignored and fall back to `"inline"`.
 
 ### Single-select layout
 
@@ -162,7 +160,7 @@ While an `ask_user` prompt is open:
 | `esc` | Clear the search filter, exit freeform/comment/additional-details mode, or cancel the prompt. |
 | `↑` / `↓`, `ctrl+k` / `ctrl+j` | Navigate options. `ctrl+k` / `ctrl+j` (vim-style) work while typing in searchable prompts without disturbing the filter. |
 
-If you prefer never to see the overlay, set `displayMode: "inline"` per call or `PI_ASK_USER_DISPLAY_MODE=inline` globally.
+If you prefer a centered modal, set `PI_ASK_USER_DISPLAY_MODE=overlay` globally.
 
 ### Mobile-sized terminals
 
@@ -174,7 +172,7 @@ While an interactive prompt is open, the extension emits `herdr:blocked` with `{
 
 ## Known limitations
 
-- **Overlays cannot draw over inline images** ([#8](https://github.com/edlsh/pi-ask-user/issues/8)). Pi-TUI's overlay compositor skips rows occupied by terminal images (Kitty/iTerm2 graphics), so an `ask_user` overlay that intersects an image is partially or fully invisible. This must be fixed upstream in pi-tui (`compositeLineAt` returns image rows unchanged). Until then, `displayMode: "inline"` (or `PI_ASK_USER_DISPLAY_MODE=inline`) sidesteps the overlay compositor entirely and should keep the prompt visible.
+- **Overlays cannot draw over inline images** ([#8](https://github.com/edlsh/pi-ask-user/issues/8)). Pi-TUI's overlay compositor skips rows occupied by terminal images (Kitty/iTerm2 graphics), so an `ask_user` overlay that intersects an image is partially or fully invisible. This must be fixed upstream in pi-tui (`compositeLineAt` returns image rows unchanged). Until then, inline mode (the default, or `PI_ASK_USER_DISPLAY_MODE=inline`) sidesteps the overlay compositor entirely and should keep the prompt visible.
 
 ## Result details
 

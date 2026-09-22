@@ -16,6 +16,8 @@ import {
   Editor,
   type EditorTheme,
   fuzzyFilter,
+  isKeyRelease,
+  isKeyRepeat,
   Key,
   type Keybinding,
   type KeybindingsManager,
@@ -97,7 +99,6 @@ interface AskParams {
   allowMultiple?: boolean;
   allowFreeform?: boolean;
   allowComment?: boolean;
-  displayMode?: AskDisplayMode;
   singleSelectLayout?: AskSingleSelectLayout;
   overlayToggleKey?: string | null;
   commentToggleKey?: string | null;
@@ -2071,12 +2072,6 @@ export default function (pi: ExtensionAPI) {
             "Collect an optional comment after selecting one or more options. Default: PI_ASK_USER_ALLOW_COMMENT env var if set, otherwise false.",
         }),
       ),
-      displayMode: Type.Optional(
-        StringEnum(["overlay", "inline"] as const, {
-          description:
-            "UI rendering mode. 'overlay' shows a centered modal, 'inline' renders in-place. Default: PI_ASK_USER_DISPLAY_MODE env var if set, otherwise 'overlay'. Omit to respect the user's configured preference.",
-        }),
-      ),
       singleSelectLayout: Type.Optional(
         StringEnum(["auto", "list"] as const, {
           description:
@@ -2115,7 +2110,6 @@ export default function (pi: ExtensionAPI) {
         allowMultiple = false,
         allowFreeform = true,
         allowComment: requestedAllowComment,
-        displayMode,
         singleSelectLayout,
         overlayToggleKey,
         commentToggleKey,
@@ -2124,7 +2118,7 @@ export default function (pi: ExtensionAPI) {
       const envMode = process.env.PI_ASK_USER_DISPLAY_MODE?.trim().toLowerCase();
       const envDisplayMode: AskDisplayMode | undefined =
         envMode === "overlay" || envMode === "inline" ? envMode : undefined;
-      const effectiveDisplayMode: AskDisplayMode = displayMode ?? envDisplayMode ?? "overlay";
+      const effectiveDisplayMode: AskDisplayMode = envDisplayMode ?? "inline";
       const envSingleSelectLayout = process.env.PI_ASK_USER_SINGLE_SELECT_LAYOUT?.trim().toLowerCase();
       const effectiveSingleSelectLayout: AskSingleSelectLayout =
         singleSelectLayout ?? (envSingleSelectLayout === "list" ? "list" : "auto");
@@ -2263,6 +2257,12 @@ export default function (pi: ExtensionAPI) {
           typeof ctx.ui.onTerminalInput === "function"
         ) {
           removeOverlayInputListener = ctx.ui.onTerminalInput((data) => {
+            // Raw input listeners run before pi-tui filters key releases, so under
+            // the Kitty keyboard protocol a single physical press delivers press +
+            // release (and held keys add repeat) events that all match the shortcut.
+            // Only toggle on the initial press, otherwise the popup hides and
+            // immediately reopens.
+            if (isKeyRelease(data) || isKeyRepeat(data)) return undefined;
             if (!overlayToggle.matches(data) || !overlayHandle) return undefined;
             const nextHidden = !overlayHandle.isHidden();
             overlayHandle.setHidden(nextHidden);
