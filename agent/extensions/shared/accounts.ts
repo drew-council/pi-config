@@ -1,8 +1,9 @@
-import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 import type { Api, Credential, Model, OAuthCredential, Provider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { findRepositoryRoot } from "./sheer-workspace.js";
 
 export const PROFILE_NAMES = ["work", "personal"] as const;
 export type ProfileName = (typeof PROFILE_NAMES)[number];
@@ -41,32 +42,9 @@ export function readJson(path: string): Record<string, unknown> {
 export function profileForDirectory(cwd: string, home = homedir()): ProfileName | undefined {
   const root = relative(home, cwd).split(sep)[0];
   if (isProfileName(root)) return root;
-  const main = mainRepositoryRoot(cwd);
-  return main ? profileForDirectory(main, home) : undefined;
-}
-
-function mainRepositoryRoot(cwd: string): string | undefined {
-  let directory = resolve(cwd);
-  for (;;) {
-    const gitPath = join(directory, ".git");
-    try {
-      if (statSync(gitPath).isFile()) {
-        const gitdir = /^gitdir:\s*(\S.*\S|\S)\s*$/m.exec(readFileSync(gitPath, "utf8"))?.[1];
-        if (!gitdir) return undefined;
-        const absolute = isAbsolute(gitdir) ? gitdir : resolve(directory, gitdir);
-        // Worktrees (<main>/.git/worktrees/<name>) and submodules
-        // (<main>/.git/modules/<path>) both resolve to the root before .git.
-        const segments = absolute.split(sep);
-        const dotGit = segments.lastIndexOf(".git");
-        return dotGit > 0 ? segments.slice(0, dotGit).join(sep) : undefined;
-      }
-    } catch {
-      // No .git here; keep walking up.
-    }
-    const parent = dirname(directory);
-    if (parent === directory) return undefined;
-    directory = parent;
-  }
+  // A plain checkout (root === main) adopts nothing; only linked checkouts inherit.
+  const found = findRepositoryRoot(cwd);
+  return found && found.main !== found.root ? profileForDirectory(found.main, home) : undefined;
 }
 
 export function readActiveProfile(agentDir: string): ProfileName {
