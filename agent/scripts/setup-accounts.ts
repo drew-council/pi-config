@@ -8,6 +8,7 @@ import {
   type Exec,
   ensureProfileFiles,
   importAccountKey,
+  managedKeyProviders,
   PROFILE_NAMES,
   profileAuthPath,
   saveCopilot,
@@ -30,13 +31,14 @@ for (const profile of PROFILE_NAMES) {
     modelsStorePath: join(agentDir, "models-store.json"),
     refreshOnCreate: false,
   });
-  const provider = profile === "work" ? "google" : "openrouter";
-  try {
-    await importAccountKey(runtime, agentDir, provider);
-    console.log(`${profile}: ${provider} key configured`);
-  } catch {
-    console.error(`${profile}: unable to initialize ${provider}; check the injected secret file`);
-    process.exitCode = 1;
+  for (const provider of managedKeyProviders(profile)) {
+    try {
+      await importAccountKey(runtime, agentDir, provider);
+      console.log(`${profile}: ${provider} key configured`);
+    } catch {
+      console.error(`${profile}: unable to initialize ${provider}; check the injected secret file`);
+      process.exitCode = 1;
+    }
   }
   if (profile === "work") {
     try {

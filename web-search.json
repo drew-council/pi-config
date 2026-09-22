@@ -11,8 +11,8 @@
     "preferredModel": "gemini-2.5-flash"
   },
   "fetch": {
-    "answerProvider": "openrouter",
-    "answerModel": "z-ai/glm-5.3-flash"
+    "answerProvider": "google",
+    "answerModel": "gemini-3.8-flash"
   },
   "fetchRouting": {
     "allowRemoteHostedProviders": true

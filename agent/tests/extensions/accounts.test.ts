@@ -134,7 +134,8 @@ describe("account initialization", () => {
     json(join(agent, "auth.json"), legacy);
     ensureProfileFiles(agent);
     expect(readJson(profileAuthPath(agent, "work"))).toEqual({ google: legacy.google });
-    expect(readJson(profileAuthPath(agent, "personal"))).toEqual({ "openai-codex": oauth });
+    // Google is shared, so personal receives it too.
+    expect(readJson(profileAuthPath(agent, "personal"))).toEqual({ google: legacy.google, "openai-codex": oauth });
     json(profileAuthPath(agent, "work"), { google: { type: "api_key", key: "new-key" } });
     ensureProfileFiles(agent);
     expect(readJson(profileAuthPath(agent, "work"))).toEqual({ google: { type: "api_key", key: "new-key" } });
@@ -180,6 +181,21 @@ describe("account initialization", () => {
     // Only the bound profile's file may receive the key.
     await expect(importMissingAccountKey(personal, agent, "work")).rejects.toThrow("not bound to work");
     expect(readJson(profileAuthPath(agent, "work"))).toEqual({});
+  });
+
+  test("seeds the shared Gemini key into every profile", async () => {
+    const { root, agent } = fixture();
+    ensureProfileFiles(agent);
+    mkdirSync(join(root, "secrets"));
+    json(join(root, "secrets/work.json"), { gemini: { apiKey: "gemini-test-key" } });
+    json(join(root, "secrets/personal.json"), { openrouter: { apiKey: "router-test-key" } });
+    const personal = await runtimeFor(agent, "personal");
+    expect(await importMissingAccountKey(personal, agent, "personal")).toBeTrue();
+    expect((await personal.getAuth("google"))?.auth.apiKey).toBe("gemini-test-key");
+    expect((await personal.getAuth("openrouter"))?.auth.apiKey).toBe("router-test-key");
+    const work = await runtimeFor(agent, "work");
+    expect(await importMissingAccountKey(work, agent, "work")).toBeTrue();
+    expect(Object.keys(readJson(profileAuthPath(agent, "work")))).toEqual(["google"]);
   });
 
   test("missing, unexpanded, and malformed secret files fail without exposing contents", () => {
@@ -270,8 +286,9 @@ describe("profile isolation using Pi's real credential store", () => {
     installModelPolicy(runtime, () => profile); // hot reload must not stack a second restrictive closure
     const personal = runtime.getAvailableSnapshot();
     expect(personal.some((m) => m.provider === "openai-codex")).toBeTrue();
-    expect(personal.every((m) => ["openai-codex", "openrouter"].includes(m.provider))).toBeTrue();
-    await expect(runtime.getAuth("google")).rejects.toThrow("disabled");
+    expect(personal.every((m) => ["openai-codex", "openrouter", "google"].includes(m.provider))).toBeTrue();
+    expect(personal.some((m) => m.provider === "google")).toBeTrue();
+    await expect(runtime.getAuth("github-copilot")).rejects.toThrow("disabled");
     profile = "work";
     expect(runtime.getAvailableSnapshot().some((m) => m.provider === "google")).toBeTrue();
   });

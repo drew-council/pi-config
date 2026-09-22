@@ -7,16 +7,22 @@ import { findRepositoryRoot } from "./sheer-workspace.js";
 
 export const PROFILE_NAMES = ["work", "personal"] as const;
 export type ProfileName = (typeof PROFILE_NAMES)[number];
+// `profile` is the account's home (whose secret file holds its key); `shared`
+// accounts are also usable from every other profile, after its own accounts.
 export const ACCOUNTS = [
   { id: "github-copilot", profile: "work", label: "GitHub Copilot · drew-council" },
-  { id: "google", profile: "work", label: "Google Gemini · Sheer Health API key" },
+  { id: "google", profile: "work", shared: true, label: "Google Gemini · Sheer Health API key" },
   { id: "claude-bridge", profile: "work", label: "Claude Code · external login" },
   { id: "openai-codex", profile: "personal", label: "OpenAI Codex · subscription" },
   { id: "openrouter", profile: "personal", label: "OpenRouter · API key" },
 ] as const;
 export type Account = (typeof ACCOUNTS)[number];
-export const providersFor = (profile: ProfileName): string[] =>
-  ACCOUNTS.filter((account) => account.profile === profile).map((account) => account.id);
+const isShared = (account: Account): boolean => "shared" in account && account.shared;
+export const accountScope = (account: Account): string => (isShared(account) ? "all" : account.profile);
+export const providersFor = (profile: ProfileName): string[] => [
+  ...ACCOUNTS.filter((account) => account.profile === profile).map((account) => account.id),
+  ...ACCOUNTS.filter((account) => account.profile !== profile && isShared(account)).map((account) => account.id),
+];
 export const providerAllowed = (profile: ProfileName, provider: string): boolean =>
   providersFor(profile).includes(provider);
 
@@ -83,10 +89,11 @@ export function ensureProfileFiles(agentDir: string): void {
   }
 }
 
-export type ManagedKeyProvider = "google" | "openrouter";
-/** The API-key account whose secret install.nu injects from 1Password for each profile. */
-export const managedKeyProvider = (profile: ProfileName): ManagedKeyProvider =>
-  profile === "work" ? "google" : "openrouter";
+export const MANAGED_KEY_PROVIDERS = ["google", "openrouter"] as const;
+export type ManagedKeyProvider = (typeof MANAGED_KEY_PROVIDERS)[number];
+/** The API-key accounts, injected from 1Password by install.nu, that each profile may use. */
+export const managedKeyProviders = (profile: ProfileName): ManagedKeyProvider[] =>
+  MANAGED_KEY_PROVIDERS.filter((provider) => providerAllowed(profile, provider));
 
 export function readAccountKey(agentDir: string, provider: ManagedKeyProvider): string {
   const profile = provider === "google" ? "work" : "personal";
@@ -115,10 +122,10 @@ export async function importAccountKey(
 }
 
 /**
- * Seeds the profile's managed API key from the local secret file when the
- * profile's credential store has no login for it yet (a fresh checkout, or a
+ * Seeds the profile's managed API keys from the local secret files when the
+ * profile's credential store has no login for them yet (a fresh checkout, or a
  * machine where install.nu has not run since the profile split). The runtime
- * must already be bound to `profile`. Returns whether a key was imported; a
+ * must already be bound to `profile`. Returns whether any key was imported; a
  * missing or unexpanded secret file is not an error, the profile simply keeps
  * whatever logins it already has.
  */
@@ -127,16 +134,19 @@ export async function importMissingAccountKey(
   agentDir: string,
   profile: ProfileName,
 ): Promise<boolean> {
-  const provider = managedKeyProvider(profile);
   const store = runtimeStore(runtime);
   if (store.authPath !== profileAuthPath(agentDir, profile)) throw new Error(`Runtime is not bound to ${profile}.`);
-  if (await store.read(provider)) return false;
-  try {
-    await importAccountKey(runtime, agentDir, provider);
-    return true;
-  } catch {
-    return false;
+  let imported = false;
+  for (const provider of managedKeyProviders(profile)) {
+    if (await store.read(provider)) continue;
+    try {
+      await importAccountKey(runtime, agentDir, provider);
+      imported = true;
+    } catch {
+      // Leave this provider unconfigured; others may still import.
+    }
   }
+  return imported;
 }
 
 export type Exec = Pick<ExtensionAPI, "exec">["exec"];

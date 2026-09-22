@@ -106,6 +106,6 @@ test("the unified filter applies profile visibility and blacklist rules together
   );
   assert.deepEqual(
     _test.filterModels(models, "personal").map((model) => model.id),
-    ["gpt-5.6-luna"],
+    ["gemini-3.8-flash", "gpt-5.6-luna"],
   );
 });

@@ -19,6 +19,7 @@ import {
 import {
   ACCOUNTS,
   type Account,
+  accountScope,
   bindRuntimeProfile,
   chooseProfileModel,
   claudeStatus,
@@ -558,7 +559,10 @@ export default function modelControl(pi: ExtensionAPI) {
   pi.registerCommand("log-me-in", {
     description: "Account login menu: work (Copilot/Gemini/Claude) and personal (Codex/OpenRouter)",
     getArgumentCompletions: (prefix) =>
-      ACCOUNTS.filter((a) => a.id.startsWith(prefix)).map((a) => ({ value: a.id, label: `${a.profile}: ${a.label}` })),
+      ACCOUNTS.filter((a) => a.id.startsWith(prefix)).map((a) => ({
+        value: a.id,
+        label: `${accountScope(a)}: ${a.label}`,
+      })),
     handler: async (args, ctx) => {
       if (ctx.mode !== "tui") {
         ctx.ui.notify("/log-me-in needs interactive Pi. Use scripts/install.nu for unattended setup.", "warning");
@@ -574,15 +578,19 @@ export default function modelControl(pi: ExtensionAPI) {
           return;
         }
         do {
+          // Shared accounts log into the active profile; others into their home profile.
+          const loginProfile = (account: Account) =>
+            providerAllowed(activeProfile, account.id) ? activeProfile : account.profile;
           const choices = ACCOUNTS.map((account) => {
-            const saved = readJson(profileAuthPath(agentDir, account.profile))[account.id];
+            const saved = readJson(profileAuthPath(agentDir, loginProfile(account)))[account.id];
             const state =
               account.id === "claude-bridge"
                 ? "check in Claude Code"
                 : saved
                   ? "configured · select to check/reconnect"
                   : "setup needed";
-            return `${account.profile}${account.profile === activeProfile ? " *" : ""} · ${account.label} — ${state}`;
+            const scope = accountScope(account);
+            return `${scope}${loginProfile(account) === activeProfile ? " *" : ""} · ${account.label} — ${state}`;
           });
           const choice = requested
             ? undefined
@@ -591,7 +599,7 @@ export default function modelControl(pi: ExtensionAPI) {
             ? ACCOUNTS.find((a) => a.id === requested)
             : ACCOUNTS[choices.indexOf(choice ?? "")];
           if (!account) return;
-          if (account.profile === activeProfile) {
+          if (loginProfile(account) === activeProfile) {
             await loginAccount(account, ctx);
             await refreshProfile(ctx, activeProfile);
             await ensurePair(ctx);
