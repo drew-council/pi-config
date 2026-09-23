@@ -29,8 +29,11 @@ function createHarness(options: HarnessOptions = {}) {
   let clipboard = options.clipboard ?? "";
   let execCalls = 0;
   const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
+  const handlers = new Map<string, () => Promise<void>>();
+  let resolveIdle: (() => void) | undefined;
   const entries: Array<{ customType: string; data: unknown }> = [];
   const sent: string[] = [];
+  const deliveries: Array<string | undefined> = [];
   const notifications: Array<{ message: string; level?: string }> = [];
   const statuses: Array<string | undefined> = [];
 
@@ -43,7 +46,9 @@ function createHarness(options: HarnessOptions = {}) {
     registerCommand(name: string, definition: { handler: (args: string, ctx: unknown) => Promise<void> }) {
       commands.set(name, definition);
     },
-    on() {},
+    on(event: string, handler: () => Promise<void>) {
+      handlers.set(event, handler);
+    },
     appendEntry(customType: string, data?: unknown) {
       entries.push({ customType, data });
     },
@@ -51,8 +56,9 @@ function createHarness(options: HarnessOptions = {}) {
       execCalls += 1;
       return { code: 0, stdout: clipboard, stderr: "" };
     },
-    sendUserMessage(message: string) {
+    sendUserMessage(message: string, options?: { deliverAs?: string }) {
       sent.push(message);
+      deliveries.push(options?.deliverAs);
     },
   };
 
@@ -63,6 +69,10 @@ function createHarness(options: HarnessOptions = {}) {
     hasUI: true,
     mode: "tui",
     isIdle: () => options.idle ?? true,
+    waitForIdle: () =>
+      new Promise<void>((resolve) => {
+        resolveIdle = resolve;
+      }),
     ui: {
       theme,
       notify: (message: string, level?: string) => notifications.push({ message, level }),
@@ -88,6 +98,7 @@ function createHarness(options: HarnessOptions = {}) {
   };
 
   return {
+    deliveries,
     entries,
     notifications,
     sent,
@@ -100,6 +111,10 @@ function createHarness(options: HarnessOptions = {}) {
       return undefined;
     },
     execCalls: () => execCalls,
+    emit: async (event: string) => {
+      await handlers.get(event)?.();
+    },
+    settle: () => resolveIdle?.(),
     setClipboard: (value: string) => {
       clipboard = value;
     },
@@ -182,16 +197,42 @@ test("bare /tuicr reports an error when the clipboard has no review", async () =
   assert.match(last?.message ?? "", /No tuicr comments were found/);
 });
 
-test("bare /tuicr waits for an idle agent before parsing the clipboard", async () => {
+test("bare /tuicr queues the prompt as a follow-up while the agent is busy", async () => {
   const harness = createHarness({ clipboard: REVIEW_TWO, idle: false });
 
   await harness.run("");
 
-  assert.equal(harness.execCalls(), 0);
-  assert.equal(harness.sent.length, 0);
-  const last = harness.notifications.at(-1);
-  assert.equal(last?.level, "warning");
-  assert.match(last?.message ?? "", /Wait for the current agent turn/);
+  assert.equal(harness.execCalls(), 1);
+  assert.equal(harness.sent.length, 1);
+  assert.deepEqual(harness.deliveries, ["followUp"]);
+  assert.deepEqual(harness.lastState()?.addressedIds, ["comment-1", "comment-2"]);
+});
+
+test("/tuicr during compaction waits for idle before sending", async () => {
+  const harness = createHarness({ clipboard: REVIEW_TWO, idle: false });
+  await harness.emit("session_before_compact");
+
+  const pending = harness.run("");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(harness.sent.length, 0, "nothing should be sent while compacting");
+  assert.deepEqual(harness.lastState()?.addressedIds, ["comment-1", "comment-2"]);
+
+  harness.settle();
+  await pending;
+
+  assert.equal(harness.sent.length, 1);
+  assert.deepEqual(harness.deliveries, ["followUp"]);
+});
+
+test("/tuicr after compaction finishes sends without waiting", async () => {
+  const harness = createHarness({ clipboard: REVIEW_TWO });
+  await harness.emit("session_before_compact");
+  await harness.emit("session_compact");
+
+  await harness.run("");
+
+  assert.equal(harness.sent.length, 1);
 });
 
 test("/tuicr parse <file> queues a review from disk", async () => {

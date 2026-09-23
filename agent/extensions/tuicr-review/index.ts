@@ -122,6 +122,9 @@ async function selectComments(
 
 export default function tuicrReviewExtension(pi: ExtensionAPI) {
   let state: ReviewState | undefined;
+  // Pi rejects extension prompts mid-compaction instead of queueing them. If this is ever stale,
+  // the only cost is waiting for idle before sending.
+  let compacting = false;
 
   const persist = () => {
     if (state) pi.appendEntry(STATE_ENTRY_TYPE, state);
@@ -150,11 +153,6 @@ export default function tuicrReviewExtension(pi: ExtensionAPI) {
       ctx.ui.notify("No active tuicr review.", "warning");
       return;
     }
-    if (!ctx.isIdle()) {
-      ctx.ui.notify("Wait for the current agent turn to finish, then run /tuicr resume.", "warning");
-      return;
-    }
-
     const unaddressed = remaining();
     if (unaddressed.length === 0) {
       updateStatus(ctx);
@@ -175,19 +173,22 @@ export default function tuicrReviewExtension(pi: ExtensionAPI) {
     );
     if (additionalInformation === undefined) return;
 
-    pi.sendUserMessage(formatPrompt(selected, additionalInformation));
     state.addressedIds.push(...selected.map((comment) => comment.id));
     state.addressedIds = [...new Set(state.addressedIds)];
     persist();
     updateStatus(ctx);
+
+    const prompt = formatPrompt(selected, additionalInformation);
+    if (compacting) {
+      ctx.ui.notify("tuicr review will be sent once compaction finishes.", "info");
+      await ctx.waitForIdle();
+      compacting = false;
+    }
+    // Sent immediately when idle, queued as a follow-up while the agent is working.
+    pi.sendUserMessage(prompt, { deliverAs: "followUp" });
   };
 
   const parseReview = async (input: ReviewInput, ctx: ExtensionCommandContext) => {
-    if (!ctx.isIdle()) {
-      ctx.ui.notify("Wait for the current agent turn to finish before parsing a review.", "warning");
-      return;
-    }
-
     try {
       let markdown: string;
       let source: string;
@@ -253,6 +254,18 @@ export default function tuicrReviewExtension(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     state = latestCustomEntryData<ReviewState>(ctx.sessionManager.getBranch(), STATE_ENTRY_TYPE);
     updateStatus(ctx);
+  });
+
+  pi.on("session_before_compact", async () => {
+    compacting = true;
+  });
+
+  pi.on("session_compact", async () => {
+    compacting = false;
+  });
+
+  pi.on("session_compact_failed", async () => {
+    compacting = false;
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
