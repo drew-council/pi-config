@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
-import { type ReviewFn, type ReviewVerdict, reviewWithModel } from "./review.js";
+import { type ReviewFn, type ReviewGate, type ReviewVerdict, reviewWithModel } from "./review.js";
 
 type ShellToken = { type: "word" | "control"; value: string };
 
@@ -203,6 +203,137 @@ function hasAiAttribution(command: string): boolean {
   return AI_ATTRIBUTION_PATTERNS.some((pattern) => pattern.test(command));
 }
 
+const RECURSIVE_DELETE: ReviewGate = {
+  name: "recursive delete",
+  detection:
+    "`rm` with a recursive flag whose targets are not all verifiably under /tmp or a mktemp directory. It can wipe whole directory trees.",
+  approveWhen: [
+    'It only deletes the OS temp dir, a mktemp directory, or a scratch/worktree/clone directory the agent itself created earlier in this transcript (including "cd /tmp && rm -rf name" and "rm -rf name && mkdir name" patterns).',
+    "The user explicitly asked for this deletion, or for a task that plainly requires it (cleaning up files the user asked to remove, recreating node_modules before a reinstall, re-cloning a throwaway checkout).",
+    "It removes build output, caches, generated artifacts, or files the agent created in this conversation inside the current project.",
+  ],
+  askWhen: [
+    "The target is a real source tree, home-directory content, dotfiles, credentials, or anything the transcript does not show as scratch or user-requested.",
+  ],
+};
+
+const DANGEROUS_COMMANDS: Array<{ pattern: RegExp; gate: ReviewGate }> = [
+  {
+    pattern: /\b(chmod|chown)\b.*777/,
+    gate: {
+      name: "dangerous permissions",
+      detection: "`chmod` or `chown` with mode 777, which makes the target world-writable.",
+      approveWhen: ["The only targets are under /tmp or a scratch directory the agent created in this transcript."],
+      askWhen: ["Any target is in a project, the home directory, or a system path."],
+    },
+  },
+  {
+    pattern: /\bmkfs\b/,
+    gate: {
+      name: "filesystem format",
+      detection: "`mkfs`, which erases and formats a filesystem.",
+      approveWhen: [
+        "The target is an image file under /tmp that the agent created in this transcript for a task the user asked for.",
+      ],
+      askWhen: ["The target is a block device or any file the transcript does not show as a scratch image."],
+    },
+  },
+  {
+    pattern: /\bdd\b.*\bof=\/dev\//,
+    gate: {
+      name: "raw device write",
+      detection: "`dd` writing to a path under /dev/, which can overwrite a disk.",
+      approveWhen: ["The output is /dev/null."],
+      askWhen: ["The output is any device other than /dev/null."],
+    },
+  },
+  {
+    pattern: />\s*\/dev\/sd[a-z]/,
+    gate: {
+      name: "raw device overwrite",
+      detection: "A shell redirect into a /dev/sd* disk device, which overwrites the disk.",
+      approveWhen: [],
+      askWhen: [],
+    },
+  },
+  {
+    pattern: /\bkill\s+-9\s+-1\b/,
+    gate: {
+      name: "kill all processes",
+      detection: "`kill -9 -1`, which kills every process the user owns.",
+      approveWhen: [],
+      askWhen: [],
+    },
+  },
+  {
+    pattern: /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;/,
+    gate: {
+      name: "fork bomb",
+      detection: "A shell fork bomb, which exhausts the machine's process table.",
+      approveWhen: [],
+      askWhen: [],
+    },
+  },
+  {
+    pattern: /\bgit\s+clean\s+[^;&|]*-[^;&|]*[df]/,
+    gate: {
+      name: "destructive git clean",
+      detection: "`git clean` with -f or -d, which permanently deletes untracked files and directories.",
+      approveWhen: [
+        "The user asked to clean the working tree.",
+        "The repository is a scratch clone or worktree the agent created in this transcript.",
+        "The transcript shows the untracked files are only build output or files the agent created.",
+      ],
+      askWhen: ["The repository may hold untracked work that the transcript does not discuss."],
+    },
+  },
+  {
+    pattern: /\bgit\s+reset\s+--hard\b/,
+    gate: {
+      name: "destructive git reset",
+      detection: "`git reset --hard`, which discards uncommitted changes and can drop commits from the branch.",
+      approveWhen: [
+        "The user asked to reset or discard these changes, or to reset a branch they named.",
+        "The repository is a scratch clone or worktree the agent created in this transcript.",
+        "The transcript shows a clean working tree and the reset only moves to a commit the user asked for.",
+      ],
+      askWhen: [
+        "The working tree may hold uncommitted work that the transcript does not discuss.",
+        "The reset would drop commits the user did not ask to remove.",
+      ],
+    },
+  },
+  {
+    pattern: /\bgit\s+push\b[^;&|]*\s(?:--force|-f)\b/,
+    gate: {
+      name: "force push",
+      detection: "`git push` with --force, --force-with-lease, or -f, which rewrites history on the remote.",
+      approveWhen: [
+        "The user asked for this push, or asked to rebase, amend, or restack their own feature branch, and this pushes that branch.",
+      ],
+      askWhen: [
+        "The target is main, master, a release branch, or another shared branch.",
+        "The user did not ask to rewrite the branch being pushed.",
+      ],
+    },
+  },
+  {
+    pattern: /\bgcloud\b/,
+    gate: {
+      name: "gcloud command",
+      detection: "Any `gcloud` invocation. It acts on real Google Cloud projects and resources.",
+      approveWhen: [
+        "It is read-only (list, describe, logs read, config list, and similar) and does not print secrets, tokens, or keys.",
+        "The user explicitly asked for this specific operation on this project and resource.",
+      ],
+      askWhen: [
+        "It creates, updates, deletes, deploys, or changes IAM, config, or auth state, and the user did not explicitly ask for it.",
+        "It prints credentials, for example `auth print-access-token` or `secrets versions access`.",
+      ],
+    },
+  },
+];
+
 const SUDO_REASON =
   "sudo is never allowed here and no approval prompt will be shown. Do not retry with sudo; if elevated privileges are genuinely required, explain to the user what they should run themselves.";
 
@@ -227,22 +358,6 @@ type BlockResult = { block: true; reason: string };
 export function createSecurityExtension(pi: ExtensionAPI, options: SecurityOptions = {}) {
   const review: ReviewFn =
     options.review ?? ((ctx, request, signal) => reviewWithModel(ctx, request, signal, getAgentDir()));
-
-  const dangerousCommands = [
-    { pattern: /\b(chmod|chown)\b.*777/, desc: "dangerous permissions" },
-    { pattern: /\bmkfs\b/, desc: "filesystem format" },
-    { pattern: /\bdd\b.*\bof=\/dev\//, desc: "raw device write" },
-    { pattern: />\s*\/dev\/sd[a-z]/, desc: "raw device overwrite" },
-    { pattern: /\bkill\s+-9\s+-1\b/, desc: "kill all processes" },
-    { pattern: /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;/, desc: "fork bomb" },
-    {
-      pattern: /\bgit\s+clean\s+[^;&|]*-[^;&|]*[df]/,
-      desc: "destructive git clean",
-    },
-    { pattern: /\bgit\s+reset\s+--hard\b/, desc: "destructive git reset" },
-    { pattern: /\bgit\s+push\b[^;&|]*\s(?:--force|-f)\b/, desc: "force push" },
-    { pattern: /\bgcloud\b/, desc: "gcloud command" },
-  ];
 
   const protectedPaths = [
     { pattern: /(^|\/)\.env($|\.(?!example$))/, desc: "environment file" },
@@ -280,8 +395,13 @@ export function createSecurityExtension(pi: ExtensionAPI, options: SecurityOptio
    * user sees a confirm dialog immediately; if the reviewer approves first, the
    * dialog is dismissed and the command runs.
    */
-  async function guardCommand(ctx: ExtensionContext, desc: string, command: string): Promise<BlockResult | undefined> {
-    const request = { command, cwd: ctx.cwd, gate: desc };
+  async function guardCommand(
+    ctx: ExtensionContext,
+    gate: ReviewGate,
+    command: string,
+  ): Promise<BlockResult | undefined> {
+    const desc = gate.name;
+    const request = { command, cwd: ctx.cwd, gate };
 
     if (!ctx.hasUI) {
       try {
@@ -339,7 +459,7 @@ export function createSecurityExtension(pi: ExtensionAPI, options: SecurityOptio
       }
 
       if (hasUnsafeRecursiveRm(command, ctx.cwd)) {
-        const blocked = await guardCommand(ctx, "recursive delete", command);
+        const blocked = await guardCommand(ctx, RECURSIVE_DELETE, command);
         if (blocked) return blocked;
       }
 
@@ -352,9 +472,9 @@ export function createSecurityExtension(pi: ExtensionAPI, options: SecurityOptio
         };
       }
 
-      for (const { pattern, desc } of dangerousCommands) {
+      for (const { pattern, gate } of DANGEROUS_COMMANDS) {
         if (pattern.test(command)) {
-          const blocked = await guardCommand(ctx, desc, command);
+          const blocked = await guardCommand(ctx, gate, command);
           if (blocked) return blocked;
           break;
         }

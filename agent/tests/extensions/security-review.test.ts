@@ -5,9 +5,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   buildReviewPrompt,
+  buildSystemPrompt,
   collectEvidence,
   parseVerdict,
   REVIEWERS,
+  type ReviewGate,
   reviewerFor,
 } from "../../extensions/security/review.js";
 import { readActiveProfile } from "../../extensions/shared/accounts.js";
@@ -84,14 +86,33 @@ test("collectEvidence clips long text and tool output", () => {
   assert.ok(lines[1].length < 450);
 });
 
+const gate = (overrides: Partial<ReviewGate> = {}): ReviewGate => ({
+  name: "recursive delete",
+  detection: "Recursive rm outside /tmp.",
+  approveWhen: ["It only deletes scratch dirs."],
+  askWhen: ["It deletes source."],
+  ...overrides,
+});
+
+test("buildSystemPrompt describes only the detection that fired", () => {
+  const prompt = buildSystemPrompt(gate());
+  assert.match(prompt, /matched the "recursive delete" detection: Recursive rm outside \/tmp\./);
+  assert.match(prompt, /clearly bounded and expected:\n- It only deletes scratch dirs\./);
+  assert.match(prompt, /Ask the user when any of these hold:\n- It deletes source\.\n- The command uses wildcards/);
+
+  const never = buildSystemPrompt(gate({ name: "fork bomb", approveWhen: [], askWhen: [] }));
+  assert.match(never, /Always return ask_user\./);
+  assert.doesNotMatch(never, /Approve when/);
+});
+
 test("buildReviewPrompt includes transcript, gate, cwd, and command", () => {
-  const prompt = buildReviewPrompt(["USER: hi"], { command: "rm -rf /tmp/x", cwd: "/work", gate: "recursive delete" });
+  const prompt = buildReviewPrompt(["USER: hi"], { command: "rm -rf /tmp/x", cwd: "/work", gate: gate() });
   assert.match(prompt, /<TRANSCRIPT>\nUSER: hi\n<\/TRANSCRIPT>/);
   assert.match(
     prompt,
     /<PROPOSED_COMMAND gate="recursive delete" cwd="\/work">\nrm -rf \/tmp\/x\n<\/PROPOSED_COMMAND>/,
   );
-  assert.match(buildReviewPrompt([], { command: "x", cwd: "/", gate: "g" }), /<empty transcript>/);
+  assert.match(buildReviewPrompt([], { command: "x", cwd: "/", gate: gate({ name: "g" }) }), /<empty transcript>/);
 });
 
 test("parseVerdict accepts plain and fenced JSON and rejects other decisions", () => {

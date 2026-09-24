@@ -151,8 +151,13 @@ test("gcloud commands go through the confirm gate", async () => {
     /gcloud command/,
   );
 
-  const approving = registerSecurityHook([], verdict("approve", "read-only listing"));
+  const gates: string[] = [];
+  const approving = registerSecurityHook([], async (_ctx, request) => {
+    gates.push(request.gate.detection);
+    return { decision: "approve", reason: "read-only listing" };
+  });
   assert.equal(await runBash(approving, "gcloud run services list"), undefined);
+  assert.match(gates[0] ?? "", /Google Cloud/);
 });
 
 test("sudo is always hard-blocked without a prompt", async () => {
@@ -170,7 +175,7 @@ test("sudo is always hard-blocked without a prompt", async () => {
 test("the background reviewer dismisses the dialog when it approves", async () => {
   const seen: Array<{ command: string; gate: string; cwd: string }> = [];
   const handler = registerSecurityHook([], async (_ctx, request) => {
-    seen.push(request);
+    seen.push({ ...request, gate: request.gate.name });
     return { decision: "approve", reason: "scratch dir under /tmp" };
   });
 
