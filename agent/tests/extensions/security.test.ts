@@ -139,6 +139,22 @@ test("dangerous commands require an affirmative UI confirmation", async () => {
   assert.equal(approved.confirmations.length, 1);
 });
 
+test("gcloud commands go through the confirm gate", async () => {
+  const handler = registerSecurityHook();
+
+  assert.equal(
+    (await runBash(handler, "gcloud projects list"))?.reason,
+    "Blocked gcloud command (no UI to confirm; reviewer unavailable: no reviewer in test)",
+  );
+  assert.match(
+    (await runBash(handler, "cd infra && gcloud run deploy api --source ."))?.reason ?? "",
+    /gcloud command/,
+  );
+
+  const approving = registerSecurityHook([], verdict("approve", "read-only listing"));
+  assert.equal(await runBash(approving, "gcloud run services list"), undefined);
+});
+
 test("sudo is always hard-blocked without a prompt", async () => {
   const handler = registerSecurityHook([], verdict("approve"));
 

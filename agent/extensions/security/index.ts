@@ -219,7 +219,7 @@ type BlockResult = { block: true; reason: string };
 /**
  * Comprehensive security hook:
  * - Hard-blocks sudo, AI co-author attribution, and bash writes to secrets
- * - Confirms dangerous bash commands (rm -rf, git reset --hard, force push, ...) with the user,
+ * - Confirms dangerous bash commands (rm -rf, git reset --hard, force push, gcloud, ...) with the user,
  *   while a cheap reviewer model checks the transcript in the background and auto-approves
  *   commands that are clearly safe (scratch dirs under /tmp, deletions the user asked for, ...)
  * - Protects sensitive paths from writes (.env, node_modules, .git, keys)
@@ -241,6 +241,7 @@ export function createSecurityExtension(pi: ExtensionAPI, options: SecurityOptio
     },
     { pattern: /\bgit\s+reset\s+--hard\b/, desc: "destructive git reset" },
     { pattern: /\bgit\s+push\b[^;&|]*\s(?:--force|-f)\b/, desc: "force push" },
+    { pattern: /\bgcloud\b/, desc: "gcloud command" },
   ];
 
   const protectedPaths = [
