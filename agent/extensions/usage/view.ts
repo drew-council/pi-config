@@ -105,8 +105,8 @@ export function profileView(snapshot: Snapshot, theme: UsageTheme, profile: Prof
       }
       if (data.resetDate) note(box, `Resets ${data.resetDate}`);
     });
-  if (providerAllowed(profile, "google")) {
-    const box = card(theme, "Google Gemini");
+  if (providerAllowed(profile, "google-vertex")) {
+    const box = card(theme, "Google Vertex AI");
     note(box, "Usage reporting not supported");
     column.addChild(box);
   }

@@ -392,8 +392,8 @@ export function profileSnapshotLines(
     openrouter: providerAllowed(profile, "openrouter") ? snapshot.openrouter : null,
   };
   const lines = [theme.bold(profile === "work" ? "Work" : "Personal"), "", ...snapshotLines(scoped, theme)];
-  if (providerAllowed(profile, "google"))
-    lines.push("", theme.bold("Google Gemini"), theme.fg("dim", "  Usage reporting not supported."));
+  if (providerAllowed(profile, "google-vertex"))
+    lines.push("", theme.bold("Google Vertex AI"), theme.fg("dim", "  Usage reporting not supported."));
   return lines;
 }
 

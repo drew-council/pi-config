@@ -26,6 +26,7 @@ import {
   readAccountKey,
   readJson,
   runtimeStore,
+  VERTEX_ENV,
 } from "../../extensions/shared/accounts.js";
 
 const directories: string[] = [];
@@ -57,6 +58,7 @@ const oauth = {
   expires: 9_999_999_999_999,
   accountId: "test",
 };
+const vertex = { type: "api_key", env: { ...VERTEX_ENV } };
 const execResult = (stdout: string) => ({ stdout, stderr: "", code: 0, killed: false });
 
 describe("directory-based startup profiles", () => {
@@ -127,38 +129,47 @@ describe("account initialization", () => {
   test("migrates only designated providers, keeps the original intact and never overwrites a profile", () => {
     const { agent } = fixture();
     const legacy = {
-      google: { type: "api_key", key: "work-key" },
+      google: { type: "api_key", key: "ai-studio-key" },
+      "google-vertex": vertex,
       "openai-codex": oauth,
       unrelated: { type: "api_key", key: "leave-alone" },
     };
     json(join(agent, "auth.json"), legacy);
     ensureProfileFiles(agent);
-    expect(readJson(profileAuthPath(agent, "work"))).toEqual({ google: legacy.google });
-    // Google is shared, so personal receives it too.
-    expect(readJson(profileAuthPath(agent, "personal"))).toEqual({ google: legacy.google, "openai-codex": oauth });
-    json(profileAuthPath(agent, "work"), { google: { type: "api_key", key: "new-key" } });
+    expect(readJson(profileAuthPath(agent, "work"))).toEqual({ "google-vertex": vertex });
+    // Vertex is shared, so personal receives it too.
+    expect(readJson(profileAuthPath(agent, "personal"))).toEqual({ "google-vertex": vertex, "openai-codex": oauth });
+    json(profileAuthPath(agent, "work"), { "google-vertex": { type: "api_key", key: "new-key" } });
     ensureProfileFiles(agent);
-    expect(readJson(profileAuthPath(agent, "work"))).toEqual({ google: { type: "api_key", key: "new-key" } });
+    expect(readJson(profileAuthPath(agent, "work"))).toEqual({ "google-vertex": { type: "api_key", key: "new-key" } });
     expect(readJson(join(agent, "auth.json"))).toEqual(legacy);
     expect(statSync(profileAuthPath(agent, "work")).mode & 0o777).toBe(0o600);
     expect(statSync(join(agent, "auth-profiles")).mode & 0o777).toBe(0o700);
   });
 
-  test("seeds both managed keys without losing existing subscription credentials", async () => {
+  test("strips the retired AI Studio credential from existing profiles", () => {
+    const { agent } = fixture();
+    ensureProfileFiles(agent);
+    json(profileAuthPath(agent, "work"), {
+      google: { type: "api_key", key: "ai-studio-key" },
+      "github-copilot": oauth,
+    });
+    ensureProfileFiles(agent);
+    expect(readJson(profileAuthPath(agent, "work"))).toEqual({ "github-copilot": oauth });
+    expect(statSync(profileAuthPath(agent, "work")).mode & 0o777).toBe(0o600);
+  });
+
+  test("seeds the managed key without losing existing subscription credentials", async () => {
     const { root, agent } = fixture();
     ensureProfileFiles(agent);
     mkdirSync(join(root, "secrets"));
-    json(join(root, "secrets/work.json"), { gemini: { apiKey: "gemini-test-key" } });
     json(join(root, "secrets/personal.json"), { openrouter: { apiKey: "router-test-key" } });
     json(profileAuthPath(agent, "personal"), { "openai-codex": oauth });
-    const work = await runtimeFor(agent, "work");
     const personal = await runtimeFor(agent, "personal");
-    await importAccountKey(work, agent, "google");
     await importAccountKey(personal, agent, "openrouter");
-    expect((await work.getAuth("google"))?.auth.apiKey).toBe("gemini-test-key");
     expect((await personal.getAuth("openrouter"))?.auth.apiKey).toBe("router-test-key");
     expect(readJson(profileAuthPath(agent, "personal"))["openai-codex"]).toEqual(oauth);
-    expect(Object.keys(readJson(profileAuthPath(agent, "work")))).toEqual(["google"]);
+    expect(readJson(profileAuthPath(agent, "work"))).toEqual({});
   });
 
   test("seeds a profile's managed key only when its store lacks one, and tolerates absent secrets", async () => {
@@ -166,9 +177,9 @@ describe("account initialization", () => {
     ensureProfileFiles(agent);
     json(profileAuthPath(agent, "personal"), { "openai-codex": oauth });
     const personal = await runtimeFor(agent, "personal");
-    // No secret file yet (a machine where install.nu never ran): not an error, nothing changes.
-    expect(await importMissingAccountKey(personal, agent, "personal")).toBeFalse();
-    expect(readJson(profileAuthPath(agent, "personal"))).toEqual({ "openai-codex": oauth });
+    // No secret file yet (a machine where install.nu never ran): not an error; only Vertex is pinned.
+    expect(await importMissingAccountKey(personal, agent, "personal")).toBeTrue();
+    expect(readJson(profileAuthPath(agent, "personal"))).toEqual({ "openai-codex": oauth, "google-vertex": vertex });
     mkdirSync(join(root, "secrets"));
     json(join(root, "secrets/personal.json"), { openrouter: { apiKey: "router-test-key" } });
     expect(await importMissingAccountKey(personal, agent, "personal")).toBeTrue();
@@ -183,30 +194,30 @@ describe("account initialization", () => {
     expect(readJson(profileAuthPath(agent, "work"))).toEqual({});
   });
 
-  test("seeds the shared Gemini key into every profile", async () => {
-    const { root, agent } = fixture();
+  test("pins the shared Vertex account to Sheer Health in every profile, replacing API keys", async () => {
+    const { agent } = fixture();
     ensureProfileFiles(agent);
-    mkdirSync(join(root, "secrets"));
-    json(join(root, "secrets/work.json"), { gemini: { apiKey: "gemini-test-key" } });
-    json(join(root, "secrets/personal.json"), { openrouter: { apiKey: "router-test-key" } });
-    const personal = await runtimeFor(agent, "personal");
-    expect(await importMissingAccountKey(personal, agent, "personal")).toBeTrue();
-    expect((await personal.getAuth("google"))?.auth.apiKey).toBe("gemini-test-key");
-    expect((await personal.getAuth("openrouter"))?.auth.apiKey).toBe("router-test-key");
+    json(profileAuthPath(agent, "work"), {
+      "google-vertex": { type: "api_key", key: "cloud-key", env: { GOOGLE_CLOUD_PROJECT: "elsewhere" } },
+    });
     const work = await runtimeFor(agent, "work");
     expect(await importMissingAccountKey(work, agent, "work")).toBeTrue();
-    expect(Object.keys(readJson(profileAuthPath(agent, "work")))).toEqual(["google"]);
+    expect(readJson(profileAuthPath(agent, "work"))).toEqual({ "google-vertex": vertex });
+    expect(await importMissingAccountKey(work, agent, "work")).toBeFalse();
+    const personal = await runtimeFor(agent, "personal");
+    expect(await importMissingAccountKey(personal, agent, "personal")).toBeTrue();
+    expect(readJson(profileAuthPath(agent, "personal"))["google-vertex"]).toEqual(vertex);
   });
 
   test("missing, unexpanded, and malformed secret files fail without exposing contents", () => {
     const { root, agent } = fixture();
-    expect(() => readAccountKey(agent, "google")).toThrow("install.nu");
+    expect(() => readAccountKey(agent, "openrouter")).toThrow("install.nu");
     mkdirSync(join(root, "secrets"));
-    json(join(root, "secrets/work.json"), { gemini: { apiKey: "{{ op://Employee/item/credential }}" } });
-    expect(() => readAccountKey(agent, "google")).toThrow("install.nu");
-    writeFileSync(join(root, "secrets/work.json"), '{"gemini": SECRET_MUST_NOT_LEAK');
+    json(join(root, "secrets/personal.json"), { openrouter: { apiKey: "{{ op://Private/item/credential }}" } });
+    expect(() => readAccountKey(agent, "openrouter")).toThrow("install.nu");
+    writeFileSync(join(root, "secrets/personal.json"), '{"openrouter": SECRET_MUST_NOT_LEAK');
     try {
-      readAccountKey(agent, "google");
+      readAccountKey(agent, "openrouter");
       throw new Error("expected failure");
     } catch (error) {
       expect(String(error)).not.toContain("SECRET_MUST_NOT_LEAK");
@@ -218,7 +229,7 @@ describe("profile isolation using Pi's real credential store", () => {
   test("switching clears runtime keys and leaves an in-flight old-profile write on its original file", async () => {
     const { agent } = fixture();
     ensureProfileFiles(agent);
-    json(profileAuthPath(agent, "work"), { google: { type: "api_key", key: "work-old" } });
+    json(profileAuthPath(agent, "work"), { "google-vertex": { type: "api_key", key: "work-old" } });
     json(profileAuthPath(agent, "personal"), { openrouter: { type: "api_key", key: "personal-key" } });
     const runtime = await runtimeFor(agent, "work");
     await runtime.setRuntimeApiKey("openrouter", "runtime-override");
@@ -230,7 +241,7 @@ describe("profile isolation using Pi's real credential store", () => {
     const entered = new Promise<void>((resolve) => {
       started = resolve;
     });
-    const write = runtimeStore(runtime).modify("google", async () => {
+    const write = runtimeStore(runtime).modify("google-vertex", async () => {
       started();
       await gate;
       return { type: "api_key", key: "work-refreshed" };
@@ -240,7 +251,10 @@ describe("profile isolation using Pi's real credential store", () => {
     expect((await runtime.getAuth("openrouter"))?.auth.apiKey).toBe("personal-key");
     release();
     await write;
-    expect(readJson(profileAuthPath(agent, "work")).google).toEqual({ type: "api_key", key: "work-refreshed" });
+    expect(readJson(profileAuthPath(agent, "work"))["google-vertex"]).toEqual({
+      type: "api_key",
+      key: "work-refreshed",
+    });
     expect(readJson(profileAuthPath(agent, "personal"))).toEqual({
       openrouter: { type: "api_key", key: "personal-key" },
     });
@@ -253,7 +267,7 @@ describe("profile isolation using Pi's real credential store", () => {
     const { agent } = fixture();
     ensureProfileFiles(agent);
     json(profileAuthPath(agent, "work"), {
-      google: { type: "api_key", key: "work-key" },
+      "google-vertex": { type: "api_key", key: "work-key" },
       "github-copilot": oauth,
       "openai-codex": oauth,
     });
@@ -263,7 +277,7 @@ describe("profile isolation using Pi's real credential store", () => {
     installModelPolicy(runtime, () => profile);
     await runtime.getAvailable();
     const work = runtime.getAvailableSnapshot();
-    expect(work.some((m) => m.provider === "google")).toBeTrue();
+    expect(work.some((m) => m.provider === "google-vertex")).toBeTrue();
     expect(work.some((m) => m.provider === "github-copilot" && m.id.startsWith("gpt-"))).toBeTrue();
     expect(work.some((m) => m.provider === "openai-codex" || m.provider === "openrouter")).toBeFalse();
     expect(work.some((m) => m.id === "gpt-4o")).toBeFalse();
@@ -286,23 +300,26 @@ describe("profile isolation using Pi's real credential store", () => {
     installModelPolicy(runtime, () => profile); // hot reload must not stack a second restrictive closure
     const personal = runtime.getAvailableSnapshot();
     expect(personal.some((m) => m.provider === "openai-codex")).toBeTrue();
-    expect(personal.every((m) => ["openai-codex", "openrouter", "google"].includes(m.provider))).toBeTrue();
-    expect(personal.some((m) => m.provider === "google")).toBeTrue();
+    expect(personal.every((m) => ["openai-codex", "openrouter", "google-vertex"].includes(m.provider))).toBeTrue();
+    expect(personal.some((m) => m.provider === "google-vertex")).toBeTrue();
     await expect(runtime.getAuth("github-copilot")).rejects.toThrow("disabled");
     profile = "work";
-    expect(runtime.getAvailableSnapshot().some((m) => m.provider === "google")).toBeTrue();
+    expect(runtime.getAvailableSnapshot().some((m) => m.provider === "google-vertex")).toBeTrue();
   });
 
   test("a saved personal scope cannot leak into the work picker, explicit selection, or cycling", async () => {
     const { agent } = fixture();
     ensureProfileFiles(agent);
-    json(profileAuthPath(agent, "work"), { google: { type: "api_key", key: "work-key" }, "openai-codex": oauth });
+    json(profileAuthPath(agent, "work"), {
+      "google-vertex": { type: "api_key", key: "work-key" },
+      "openai-codex": oauth,
+    });
     const runtime = await runtimeFor(agent, "work");
     const codex = runtime.getModels("openai-codex")[0];
     let profile: "work" | "personal" = "work";
     installModelPolicy(runtime, () => profile, []);
     await runtime.getAvailable();
-    const google = runtime.getAvailableSnapshot().find((model) => model.provider === "google");
+    const google = runtime.getAvailableSnapshot().find((model) => model.provider === "google-vertex");
     if (!google || !codex) throw new Error("Missing built-in test models");
     const settingsManager = SettingsManager.inMemory();
     const resourceLoader = new DefaultResourceLoader({
@@ -333,7 +350,7 @@ describe("profile isolation using Pi's real credential store", () => {
       expect(session.scopedModels).toEqual([]);
       await expect(session.setModel(codex)).rejects.toThrow("No API key");
       const cycled = await session.cycleModel();
-      expect((cycled?.model ?? session.model)?.provider).toBe("google");
+      expect((cycled?.model ?? session.model)?.provider).toBe("google-vertex");
       if (cycled) expect(cycled.isScoped).toBeFalse();
       profile = "personal";
       expect(session.scopedModels.map((entry) => entry.model.provider)).toEqual(["openai-codex"]);
@@ -346,7 +363,7 @@ describe("profile isolation using Pi's real credential store", () => {
 
   test("fallback never selects a provider from the other account, including empty profiles", () => {
     const codex = { provider: "openai-codex", id: "gpt-test" } as Model<Api>;
-    const gemini = { provider: "google", id: "gemini-test" } as Model<Api>;
+    const gemini = { provider: "google-vertex", id: "gemini-test" } as Model<Api>;
     expect(chooseProfileModel([codex, gemini], "work", codex)).toBe(gemini);
     expect(chooseProfileModel([codex], "work")).toBeUndefined();
     expect(chooseProfileModel([gemini, codex], "personal", codex)).toBe(codex);

@@ -28,7 +28,7 @@ export type ReviewFn = (ctx: ExtensionContext, request: ReviewRequest, signal: A
 export type ReviewerChoice = { provider: string; model: string; thinking: ThinkingLevel };
 
 export const REVIEWERS: Record<ProfileName, ReviewerChoice> = {
-  work: { provider: "google", model: "gemini-3.8-flash", thinking: "medium" },
+  work: { provider: "google-vertex", model: "gemini-3.8-flash", thinking: "medium" },
   personal: { provider: "openrouter", model: "z-ai/glm-5.3-flash", thinking: "high" },
 };
 
@@ -38,6 +38,11 @@ const EVIDENCE_MAX_CHARS = 60_000;
 const LINE_MAX_CHARS = 2_000;
 /** Tool output excerpt kept per result. */
 const RESULT_EXCERPT_CHARS = 400;
+/**
+ * Output cap for the reviewer. Gemini and OpenRouter count reasoning tokens
+ * against this limit, so it must cover thinking plus the short JSON verdict.
+ */
+const REVIEW_MAX_TOKENS = 8_192;
 
 const bullets = (items: readonly string[]) => items.map((item) => `- ${item}`).join("\n");
 
@@ -180,6 +185,19 @@ export function parseVerdict(text: string): ReviewVerdict {
   return { decision: value.decision, reason };
 }
 
+type ReviewResponse = { stopReason: string; errorMessage?: string; content: unknown };
+
+/** Turn a completed reviewer response into a verdict, naming why it failed when it did. */
+export function verdictFromResponse(response: ReviewResponse, signal: AbortSignal): ReviewVerdict {
+  if (response.stopReason === "aborted" || signal.aborted) throw new Error("review cancelled");
+  if (response.stopReason === "error") throw new Error(response.errorMessage ?? "reviewer request failed");
+  const text = textOf(response.content);
+  if (response.stopReason === "length" && !text.includes("}")) {
+    throw new Error(`reviewer hit its ${REVIEW_MAX_TOKENS}-token output limit before answering`);
+  }
+  return parseVerdict(text);
+}
+
 function runtimeOf(registry: ExtensionContext["modelRegistry"]): ModelRuntime {
   const runtime = (registry as unknown as { runtime?: ModelRuntime }).runtime;
   if (!runtime || typeof runtime.completeSimple !== "function") {
@@ -218,9 +236,7 @@ export async function reviewWithModel(
         },
       ],
     },
-    { signal, maxTokens: 512, ...(thinking === "off" ? {} : { reasoning: thinking }) },
+    { signal, maxTokens: REVIEW_MAX_TOKENS, ...(thinking === "off" ? {} : { reasoning: thinking }) },
   );
-  if (response.stopReason === "aborted" || signal.aborted) throw new Error("review cancelled");
-  if (response.stopReason === "error") throw new Error(response.errorMessage ?? "reviewer request failed");
-  return parseVerdict(textOf(response.content));
+  return verdictFromResponse(response, signal);
 }

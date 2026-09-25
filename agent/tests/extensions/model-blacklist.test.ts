@@ -96,8 +96,8 @@ test("a live reload updates callbacks retained by the replaced policy wrappers",
 
 test("the unified filter applies profile visibility and blacklist rules together", () => {
   const models = [
-    { provider: "google", id: "gemini-3-flash" },
-    { provider: "google", id: "gemini-3.8-flash" },
+    { provider: "google-vertex", id: "gemini-3-flash" },
+    { provider: "google-vertex", id: "gemini-3.8-flash" },
     { provider: "openai-codex", id: "gpt-5.6-luna" },
   ];
   assert.deepEqual(

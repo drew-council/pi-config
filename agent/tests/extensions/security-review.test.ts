@@ -11,6 +11,7 @@ import {
   REVIEWERS,
   type ReviewGate,
   reviewerFor,
+  verdictFromResponse,
 } from "../../extensions/security/review.js";
 import { readActiveProfile } from "../../extensions/shared/accounts.js";
 
@@ -132,6 +133,23 @@ test("parseVerdict accepts plain and fenced JSON and rejects other decisions", (
   assert.throws(() => parseVerdict("no json here"), /no JSON object/);
 });
 
+test("verdictFromResponse reports a reviewer that spent its output budget thinking", () => {
+  const signal = new AbortController().signal;
+  const text = (value: string) => [{ type: "text", text: value }];
+  assert.throws(
+    () => verdictFromResponse({ stopReason: "length", content: [{ type: "thinking", thinking: "..." }] }, signal),
+    /output limit before answering/,
+  );
+  assert.deepEqual(
+    verdictFromResponse({ stopReason: "length", content: text('{"decision":"ask_user","reason":"x"}') }, signal),
+    { decision: "ask_user", reason: "x" },
+  );
+  assert.throws(
+    () => verdictFromResponse({ stopReason: "error", errorMessage: "model offline", content: [] }, signal),
+    /model offline/,
+  );
+});
+
 test("reviewer choice follows the active profile", () => {
   const agentDir = mkdtempSync(path.join(tmpdir(), "pi-security-review-"));
   writeFileSync(path.join(agentDir, "auth-profiles.json"), '{"activeProfile":"personal"}\n');
@@ -140,7 +158,7 @@ test("reviewer choice follows the active profile", () => {
   try {
     process.env.PI_AUTH_PROFILE = "work";
     assert.equal(readActiveProfile(agentDir), "work");
-    assert.deepEqual(reviewerFor("work"), { provider: "google", model: "gemini-3.8-flash", thinking: "medium" });
+    assert.deepEqual(reviewerFor("work"), { provider: "google-vertex", model: "gemini-3.8-flash", thinking: "medium" });
 
     delete process.env.PI_AUTH_PROFILE;
     assert.equal(readActiveProfile(agentDir), "personal");

@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, sep } from "node:path";
 import type { Api, Credential, Model, OAuthCredential, Provider } from "@earendil-works/pi-ai";
@@ -11,7 +11,7 @@ export type ProfileName = (typeof PROFILE_NAMES)[number];
 // accounts are also usable from every other profile, after its own accounts.
 export const ACCOUNTS = [
   { id: "github-copilot", profile: "work", label: "GitHub Copilot · drew-council" },
-  { id: "google", profile: "work", shared: true, label: "Google Gemini · Sheer Health API key" },
+  { id: "google-vertex", profile: "work", shared: true, label: "Google Vertex AI · Sheer Health gcloud ADC" },
   { id: "claude-bridge", profile: "work", label: "Claude Code · external login" },
   { id: "openai-codex", profile: "personal", label: "OpenAI Codex · subscription" },
   { id: "openrouter", profile: "personal", label: "OpenRouter · API key" },
@@ -66,6 +66,10 @@ export function writeActiveProfile(agentDir: string, profile: ProfileName): void
   chmodSync(path, 0o600);
 }
 
+// Providers that must never be used again. `google` is the AI Studio API, which
+// is not covered by Sheer Health's Vertex AI ZDR and BAA terms.
+const RETIRED_PROVIDERS = ["google"];
+
 export function ensureProfileFiles(agentDir: string): void {
   const directory = join(agentDir, "auth-profiles");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -85,21 +89,60 @@ export function ensureProfileFiles(agentDir: string): void {
       const legacy = readJson(join(agentDir, "auth.json"));
       const entries = Object.fromEntries(Object.entries(legacy).filter(([id]) => providerAllowed(profile, id)));
       writeFileSync(path, `${JSON.stringify(entries, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+      continue;
+    }
+    const entries = readJson(path);
+    if (RETIRED_PROVIDERS.some((id) => id in entries)) {
+      for (const id of RETIRED_PROVIDERS) delete entries[id];
+      writeFileSync(path, `${JSON.stringify(entries, null, 2)}\n`, { mode: 0o600 });
     }
   }
 }
 
-export const MANAGED_KEY_PROVIDERS = ["google", "openrouter"] as const;
+// Sheer Health's Vertex project, as used by ~/work/sheer's local Gemini client.
+// Only the `global` location serves the current Gemini models.
+export const VERTEX_ENV = { GOOGLE_CLOUD_PROJECT: "optimum-nebula-375615", GOOGLE_CLOUD_LOCATION: "global" } as const;
+export const vertexAdcPath = (): string =>
+  process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim() ||
+  join(homedir(), ".config", "gcloud", "application_default_credentials.json");
+export const hasVertexAdc = (): boolean => existsSync(vertexAdcPath());
+
+/**
+ * Pins Vertex to Sheer Health's project in the bound profile's credential store,
+ * so neither ambient env vars nor a stored API key can redirect Gemini traffic.
+ * Authentication itself comes from `gcloud auth application-default login`.
+ */
+export async function saveVertex(runtime: ModelRuntime, signal = AbortSignal.timeout(5_000)): Promise<void> {
+  await runtimeStore(runtime).modify(
+    "google-vertex",
+    async () => {
+      signal.throwIfAborted();
+      return { type: "api_key", env: { ...VERTEX_ENV } } as Credential;
+    },
+    { signal },
+  );
+}
+
+const isPinnedVertex = (credential: Credential | undefined): boolean => {
+  const value = credential as { key?: unknown; env?: Record<string, unknown> } | undefined;
+  return (
+    value?.key === undefined &&
+    value?.env?.GOOGLE_CLOUD_PROJECT === VERTEX_ENV.GOOGLE_CLOUD_PROJECT &&
+    value?.env?.GOOGLE_CLOUD_LOCATION === VERTEX_ENV.GOOGLE_CLOUD_LOCATION
+  );
+};
+
+export const MANAGED_KEY_PROVIDERS = ["openrouter"] as const;
 export type ManagedKeyProvider = (typeof MANAGED_KEY_PROVIDERS)[number];
 /** The API-key accounts, injected from 1Password by install.nu, that each profile may use. */
 export const managedKeyProviders = (profile: ProfileName): ManagedKeyProvider[] =>
   MANAGED_KEY_PROVIDERS.filter((provider) => providerAllowed(profile, provider));
 
 export function readAccountKey(agentDir: string, provider: ManagedKeyProvider): string {
-  const profile = provider === "google" ? "work" : "personal";
+  const profile = "personal";
   const path = join(agentDir, "..", "secrets", `${profile}.json`);
   const data = readJson(path);
-  const entry = data[provider === "google" ? "gemini" : "openrouter"] as { apiKey?: unknown } | undefined;
+  const entry = data[provider] as { apiKey?: unknown } | undefined;
   if (typeof entry?.apiKey !== "string" || !entry.apiKey.trim() || entry.apiKey.includes("op://")) {
     throw new Error(
       `Missing ${profile} ${provider} key. Run ~/.pi/scripts/install.nu to initialize 1Password secrets.`,
@@ -124,10 +167,11 @@ export async function importAccountKey(
 /**
  * Seeds the profile's managed API keys from the local secret files when the
  * profile's credential store has no login for them yet (a fresh checkout, or a
- * machine where install.nu has not run since the profile split). The runtime
- * must already be bound to `profile`. Returns whether any key was imported; a
- * missing or unexpanded secret file is not an error, the profile simply keeps
- * whatever logins it already has.
+ * machine where install.nu has not run since the profile split), and pins
+ * Vertex to Sheer Health's project. The runtime must already be bound to
+ * `profile`. Returns whether anything was written; a missing or unexpanded
+ * secret file is not an error, the profile simply keeps whatever logins it
+ * already has.
  */
 export async function importMissingAccountKey(
   runtime: ModelRuntime,
@@ -137,6 +181,10 @@ export async function importMissingAccountKey(
   const store = runtimeStore(runtime);
   if (store.authPath !== profileAuthPath(agentDir, profile)) throw new Error(`Runtime is not bound to ${profile}.`);
   let imported = false;
+  if (providerAllowed(profile, "google-vertex") && !isPinnedVertex(await store.read("google-vertex"))) {
+    await saveVertex(runtime);
+    imported = true;
+  }
   for (const provider of managedKeyProviders(profile)) {
     if (await store.read(provider)) continue;
     try {

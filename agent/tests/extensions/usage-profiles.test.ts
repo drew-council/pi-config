@@ -19,7 +19,7 @@ test("usage columns contain only their profile's providers, even for errors", ()
   const personal = profileSnapshotLines(snapshot, theme, "personal").join("\n");
   expect(work).toContain("copilot-only");
   expect(work).toContain("claude-only");
-  expect(work).toContain("Google Gemini");
+  expect(work).toContain("Google Vertex AI");
   expect(work).not.toContain("codex-only");
   expect(work).not.toContain("router-only");
   expect(personal).toContain("codex-only");
@@ -58,7 +58,7 @@ test("metrics keep percentages intact and reset times separate at normal termina
     expect(lines.some((line) => line.includes("Resets"))).toBeTrue();
   }
   const narrow = profileColumns(data, theme, 40).join("\n");
-  expect(narrow.indexOf("PERSONAL")).toBeGreaterThan(narrow.indexOf("Google Gemini"));
+  expect(narrow.indexOf("PERSONAL")).toBeGreaterThan(narrow.indexOf("Google Vertex AI"));
 });
 
 test("usage reads each owning profile without global or opposite-profile fallback", async () => {

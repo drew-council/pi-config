@@ -25,6 +25,7 @@ import {
   claudeStatus,
   copilotFromGh,
   ensureProfileFiles,
+  hasVertexAdc,
   importAccountKey,
   importMissingAccountKey,
   isProfileName,
@@ -38,6 +39,8 @@ import {
   readJson,
   runtimeStore,
   saveCopilot,
+  saveVertex,
+  VERTEX_ENV,
   verifyGitHubAccount,
   writeActiveProfile,
 } from "../shared/accounts.js";
@@ -487,7 +490,22 @@ export default function modelControl(pi: ExtensionAPI) {
         if (choice !== "Recheck Claude Code") return;
       }
     }
-    if (account.id === "google" || account.id === "openrouter") {
+    if (account.id === "google-vertex") {
+      while (true) {
+        await saveVertex(runtime);
+        const ok = hasVertexAdc() && Boolean(await runtime.getAuth(account.id));
+        if (ok) {
+          ctx.ui.notify(`${account.label}: using project ${VERTEX_ENV.GOOGLE_CLOUD_PROJECT}.`, "info");
+          return;
+        }
+        const choice = await ctx.ui.select(
+          "No gcloud Application Default Credentials. Run `gcloud auth application-default login` as your Sheer Health account, then recheck.",
+          ["Recheck gcloud ADC", "Back"],
+        );
+        if (choice !== "Recheck gcloud ADC") return;
+      }
+    }
+    if (account.id === "openrouter") {
       try {
         await importAccountKey(runtime, agentDir, account.id);
         ctx.ui.notify(`${account.label}: configured from the local 1Password-injected secret file.`, "info");
@@ -557,7 +575,7 @@ export default function modelControl(pi: ExtensionAPI) {
   };
 
   pi.registerCommand("log-me-in", {
-    description: "Account login menu: work (Copilot/Gemini/Claude) and personal (Codex/OpenRouter)",
+    description: "Account login menu: work (Copilot/Vertex AI/Claude) and personal (Codex/OpenRouter)",
     getArgumentCompletions: (prefix) =>
       ACCOUNTS.filter((a) => a.id.startsWith(prefix)).map((a) => ({
         value: a.id,

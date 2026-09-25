@@ -7,11 +7,14 @@ import {
   copilotFromGh,
   type Exec,
   ensureProfileFiles,
+  hasVertexAdc,
   importAccountKey,
   managedKeyProviders,
   PROFILE_NAMES,
   profileAuthPath,
+  providerAllowed,
   saveCopilot,
+  saveVertex,
 } from "../extensions/shared/accounts.js";
 
 const agentDir = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -31,6 +34,14 @@ for (const profile of PROFILE_NAMES) {
     modelsStorePath: join(agentDir, "models-store.json"),
     refreshOnCreate: false,
   });
+  if (providerAllowed(profile, "google-vertex")) {
+    await saveVertex(runtime);
+    console.log(
+      hasVertexAdc()
+        ? `${profile}: Vertex AI pinned to Sheer Health using gcloud ADC`
+        : `${profile}: Vertex AI needs \`gcloud auth application-default login\` (Sheer Health account)`,
+    );
+  }
   for (const provider of managedKeyProviders(profile)) {
     try {
       await importAccountKey(runtime, agentDir, provider);

@@ -21,7 +21,7 @@ import { profileAuthPath } from "../../extensions/shared/accounts.js";
 const model = (provider: string, id: string, reasoning = true) => ({ provider, id, reasoning }) as Model<Api>;
 const codex = model("openai-codex", "personal-model");
 const copilot = model("github-copilot", "gpt-5.6-luna");
-const google = model("google", "gemini-3.8-flash");
+const google = model("google-vertex", "gemini-3.8-flash");
 const claude = model("claude-bridge", "claude-opus-5");
 function modelContext(models: Model<Api>[], current: Model<Api> | undefined = codex, thinking = "high") {
   return {
@@ -137,7 +137,7 @@ test("profile defaults select the exact complete model/effort pair", async () =>
 });
 
 test("an unavailable default uses a deterministic profile fallback and clamps effort", async () => {
-  const noReasoning = model("google", "gemini-3.8-flash", false);
+  const noReasoning = model("google-vertex", "gemini-3.8-flash", false);
   const ctx = modelContext([copilot, noReasoning]);
   const result = await applyProfileDefault(
     {

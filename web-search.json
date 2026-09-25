@@ -1,6 +1,5 @@
 {
-  "allowBrowserCookies": true,
-  "chromeProfile": "Default",
+  "allowBrowserCookies": false,
   "video": {
     "enabled": true,
     "preferredModel": "gemini-2.5-flash",
@@ -11,10 +10,13 @@
     "preferredModel": "gemini-2.5-flash"
   },
   "fetch": {
-    "answerProvider": "google",
+    "answerProvider": "google-vertex",
     "answerModel": "gemini-3.8-flash"
   },
   "fetchRouting": {
     "allowRemoteHostedProviders": true
-  }
+  },
+  "geminiAuth": "adc",
+  "geminiProject": "optimum-nebula-375615",
+  "geminiLocation": "global"
 }
