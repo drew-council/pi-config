@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+set -eu
+
+root="${TMPDIR:-/tmp}/pi-agent-tmp"
+(umask 077; mkdir -p "$root"; mktemp -d "$root/tmp.XXXXXXXX")
+
