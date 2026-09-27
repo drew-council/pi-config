@@ -2,6 +2,23 @@
 
 set -eu
 
+usage() {
+  printf 'Usage: tmp [--help]\nCreate a directory under the system temp root and print its path.\n'
+}
+
+if (($#)); then
+  case "$1" in
+    -h|--help|help)
+      if (($# == 1)); then
+        usage
+        exit 0
+      fi
+      ;;
+  esac
+  usage >&2
+  exit 2
+fi
+
 root="${TMPDIR:-/tmp}/pi-agent-tmp"
 (umask 077; mkdir -p "$root"; mktemp -d "$root/tmp.XXXXXXXX")
 
