@@ -1,5 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
+import os from "node:os";
 import path from "node:path";
 import { type ExtensionAPI, getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ReviewFn, ReviewVerdict } from "../../extensions/security/review.js";
@@ -103,6 +104,13 @@ test("recursive delete protection distinguishes verified temporary paths from un
 
   assert.equal(await runBash(handler, "rm -rf /tmp/pi-security-test"), undefined);
   assert.equal(await runBash(handler, 'TMP_DIR=$(mktemp -d); rm -rf "$TMP_DIR"'), undefined);
+  assert.equal(await runBash(handler, 'rm -rf "$(tmp)"'), undefined);
+  assert.equal(await runBash(handler, 'WORK=$(tmp); rm -rf "$WORK/subdir"'), undefined);
+  assert.equal(
+    await runBash(handler, `rm -rf ${path.join(os.tmpdir(), "pi-agent-tmp", "tmp.example", "child")}`),
+    undefined,
+  );
+  assert.match((await runBash(handler, 'WORK=$(tmp); rm -rf "$WORK/../project"'))?.reason ?? "", /recursive delete/);
   assert.match(
     (await runBash(handler, 'TMP_DIR=/workspace/data; rm -rf "$TMP_DIR"'))?.reason ?? "",
     /recursive delete/,

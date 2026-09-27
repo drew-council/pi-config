@@ -1,3 +1,4 @@
+import * as os from "node:os";
 import * as path from "node:path";
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { type ReviewFn, type ReviewGate, type ReviewVerdict, reviewWithModel } from "./review.js";
@@ -94,7 +95,8 @@ function isPathBelowTmp(target: string, cwd: string): boolean {
   if (target.length === 0 || /[`$~]/.test(target)) return false;
 
   const absoluteTarget = path.isAbsolute(target) ? path.normalize(target) : path.resolve(cwd, target);
-  return absoluteTarget !== "/tmp" && absoluteTarget !== "/tmp/" && absoluteTarget.startsWith("/tmp/");
+  const roots = ["/tmp", path.join(os.tmpdir(), "pi-agent-tmp")];
+  return roots.some((root) => absoluteTarget.startsWith(`${root}${path.sep}`));
 }
 
 function isPiManagedDependencyPath(filePath: string, cwd: string): boolean {
@@ -118,7 +120,8 @@ function variableName(word: string): string | undefined {
 
 function resolveShellValue(word: string, variables: Map<string, ShellValue>, cwd: string): ShellValue {
   if (isPathBelowTmp(word, cwd)) return { kind: "safe-path", value: word };
-  if (/^\$\(\s*mktemp\s+-d(?:\s+[^)]*)?\s*\)$/.test(word)) return { kind: "temporary" };
+  if (/^\$\(\s*mktemp\s+-d(?:\s+[^)]*)?\s*\)$/.test(word) || /^\$\(\s*tmp\s*\)$/.test(word))
+    return { kind: "temporary" };
 
   const name = variableName(word);
   if (name) return variables.get(name) ?? (isTemporaryVariableName(name) ? { kind: "temporary" } : { kind: "unknown" });
@@ -126,7 +129,7 @@ function resolveShellValue(word: string, variables: Map<string, ShellValue>, cwd
   const prefix = /^(?:\$([A-Za-z_][A-Za-z0-9_]*)|\$\{([A-Za-z_][A-Za-z0-9_]*)})(\/.*)$/.exec(word);
   if (prefix) {
     const value = variables.get(prefix[1] ?? prefix[2]);
-    if (value?.kind === "temporary") return { kind: "temporary" };
+    if (value?.kind === "temporary" && !prefix[3].split("/").includes("..")) return { kind: "temporary" };
     if (value?.kind === "safe-path" && !prefix[3].includes("..")) {
       return { kind: "safe-path", value: path.join(value.value, prefix[3]) };
     }
@@ -206,8 +209,9 @@ function hasAiAttribution(command: string): boolean {
 const RECURSIVE_DELETE: ReviewGate = {
   name: "recursive delete",
   detection:
-    "`rm` with a recursive flag whose targets are not all verifiably under /tmp or a mktemp directory. It can wipe whole directory trees.",
+    "`rm` with a recursive flag whose targets are not all verifiably under /tmp, a mktemp directory, or a tmp directory. It can wipe whole directory trees.",
   approveWhen: [
+    "Directories created by `tmp` under pi-agent-tmp, and their children, are intended cleanup targets.",
     'It only deletes the OS temp dir, a mktemp directory, or a scratch/worktree/clone directory the agent itself created earlier in this transcript (including "cd /tmp && rm -rf name" and "rm -rf name && mkdir name" patterns).',
     "The user explicitly asked for this deletion, or for a task that plainly requires it (cleaning up files the user asked to remove, recreating node_modules before a reinstall, re-cloning a throwaway checkout).",
     "It removes build output, caches, generated artifacts, or files the agent created in this conversation inside the current project.",
