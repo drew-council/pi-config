@@ -7,7 +7,7 @@ A self-contained Go CLI for the `sheerhealth/sheer` GitHub workflow. It uses `go
 ```sh
 bin/sheer-gh --help
 # From any directory:
-~/.pi/agent/skills/github/sheer-gh/bin/sheer-gh ci latest ci
+~/.pi/agent/skills/sheer-gh/sheer-gh/bin/sheer-gh ci latest ci
 ```
 
 ## Develop

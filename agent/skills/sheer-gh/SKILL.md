@@ -1,6 +1,7 @@
 ---
-name: github
+name: sheer-gh
 description: Work with the sheerhealth/sheer GitHub repo, covering pull requests, issues, epics, the sprint board, CI runs, discussions, the wiki, and releases. Use for any request that touches GitHub in this repo, however small, even when a single `gh` command looks sufficient. The bundled CLI is the mandatory primary interface; use raw `gh` only for unsupported operations. Trigger on any mention of a PR, issue, epic, sprint, board, triage, review comment, check, CI, workflow, action, run, discussion, spec, TDR, wiki page, release, tag, or deploy.
+disable-model-invocation: true
 ---
 
 # GitHub for sheerhealth/sheer

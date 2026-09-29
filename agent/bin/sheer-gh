@@ -1,2 +1,2 @@
 #!/bin/sh
-exec "$(dirname "$0")/../skills/github/sheer-gh/bin/sheer-gh" "$@"
+exec "$(dirname "$0")/../skills/sheer-gh/sheer-gh/bin/sheer-gh" "$@"
