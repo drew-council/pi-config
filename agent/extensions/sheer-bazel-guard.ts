@@ -1,20 +1,26 @@
 /**
- * Block raw `go` commands inside the Sheer checkout and its linked worktrees.
+ * Warn the agent about raw `go` commands inside the Sheer checkout and its
+ * linked worktrees. The command still runs; the warning is appended to its result.
  *
  * Sheer configures test flags, environment, data dependencies, and skips in
  * BUILD.bazel, so plain `go test`/`go build` produce false failures and miss
  * Bazel's caches. `//go:generate` directives need the compiled `graph` binary,
- * which only `make generate` provides. Each rejection tells the agent the
- * Bazel or Make command to run instead, with package paths translated to
+ * which only `make generate` provides. Each warning tells the agent the
+ * Bazel or Make command to prefer, with package paths translated to
  * labels relative to the repository root.
  */
 
 import { homedir } from "node:os";
 import { dirname, relative, resolve } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  ToolResultEvent,
+  ToolResultEventResult,
+} from "@earendil-works/pi-coding-agent";
 import { sheerWorkspaceFor } from "./shared/sheer-workspace.js";
 
-const BLOCKED_SUBCOMMANDS = new Set(["test", "build", "vet", "generate", "run"]);
+const WARNED_SUBCOMMANDS = new Set(["test", "build", "vet", "generate", "run"]);
 const GO_TEST_VALUE_FLAGS = new Set([
   "bench",
   "benchtime",
@@ -184,7 +190,7 @@ type GoInvocation = { subcommand: string; args: string[] };
 
 function parseGoInvocation(words: string[]): GoInvocation | undefined {
   const [executable, subcommand, ...args] = stripPrefixes(words);
-  if (!isGoExecutable(executable) || !subcommand || !BLOCKED_SUBCOMMANDS.has(subcommand)) return undefined;
+  if (!isGoExecutable(executable) || !subcommand || !WARNED_SUBCOMMANDS.has(subcommand)) return undefined;
   return { subcommand, args };
 }
 
@@ -258,39 +264,39 @@ function guidance(invocation: GoInvocation, translation: Translation): string {
     case "test": {
       const flags = translation.flags.length > 0 ? ` ${translation.flags.join(" ")}` : "";
       return [
-        "Raw `go test` is disabled in Sheer workspaces: test flags, environment, data dependencies, and skips come from BUILD.bazel, so plain go test reports false failures and misses the Bazel cache.",
-        `Use instead: bazel test ${targets}${flags}`,
+        "This repository uses Bazel: test flags, environment, data dependencies, and skips come from BUILD.bazel, so raw `go test` can report false failures and misses the Bazel cache.",
+        `Prefer: bazel test ${targets}${flags}`,
       ].join("\n");
     }
     case "build":
       return [
-        "Raw `go build` is disabled in Sheer workspaces: it bypasses Bazel's build cache and nogo analyzers.",
-        `Use instead: bazel build ${targets}`,
+        "This repository uses Bazel: raw `go build` bypasses Bazel's build cache and nogo analyzers.",
+        `Prefer: bazel build ${targets}`,
       ].join("\n");
     case "run":
       return [
-        "Raw `go run` is disabled in Sheer workspaces: binaries are built and run through Bazel.",
-        `Use instead: bazel run ${translation.labels[0] ?? "//cmd/<binary>"}`,
+        "This repository uses Bazel: binaries are built and run through Bazel, not raw `go run`.",
+        `Prefer: bazel run ${translation.labels[0] ?? "//cmd/<binary>"}`,
       ].join("\n");
     case "vet":
       return [
-        "Raw `go vet` is disabled in Sheer workspaces: Bazel runs nogo analyzers during build and test.",
-        `Use instead: bazel build ${targets} (or scripts/golangci-lint.sh run)`,
+        "This repository uses Bazel: nogo analyzers run during bazel build and test, so raw `go vet` is not the project check.",
+        `Prefer: bazel build ${targets} (or scripts/golangci-lint.sh run)`,
       ].join("\n");
     case "generate": {
       const scope = patterns === "./..." || patterns === "" ? "" : ` PKG=${patterns}`;
       return [
-        "Direct `go generate` is disabled in Sheer workspaces: the directives need a freshly built `graph` on PATH, which only the Make target provides.",
-        `Use instead (from the repository root): make generate${scope}`,
+        "Direct `go generate` may fail or produce stale output here: the directives need a freshly built `graph` on PATH, which only the Make target provides.",
+        `Prefer (from the repository root): make generate${scope}`,
       ].join("\n");
     }
     default:
-      return `Raw \`go ${invocation.subcommand}\` is disabled in Sheer workspaces.`;
+      return `This repository uses Bazel; prefer it over raw \`go ${invocation.subcommand}\`.`;
   }
 }
 
-/** Returns the rejection reason for the first blocked Go command, or undefined when the command may run. */
-export function guardCommand(command: string, cwd: string, home = homedir()): string | undefined {
+/** Returns the warning for the first raw Go command that should go through Bazel, or undefined when there is none. */
+export function bazelWarning(command: string, cwd: string, home = homedir()): string | undefined {
   for (const segment of splitSegments(command, cwd, home)) {
     const invocation = parseGoInvocation(segment.words);
     if (!invocation) continue;
@@ -301,17 +307,23 @@ export function guardCommand(command: string, cwd: string, home = homedir()): st
   return undefined;
 }
 
-export default function (pi: ExtensionAPI) {
-  pi.on("tool_call", (event, ctx) => {
-    if (event.toolName !== "bash") return undefined;
-    const command = event.input.command;
-    if (typeof command !== "string") return undefined;
-    const reason = guardCommand(command, ctx.cwd);
-    if (!reason) return undefined;
-    if (ctx.hasUI)
-      ctx.ui.notify("Blocked raw go command in Sheer workspace; Bazel guidance sent to the agent", "warning");
-    return { block: true, reason };
-  });
+/** Appends the Bazel warning to a raw go command's bash result in a Sheer workspace. */
+function warnOnToolResult(
+  event: ToolResultEvent,
+  ctx: ExtensionContext,
+  home = homedir(),
+): ToolResultEventResult | undefined {
+  if (event.toolName !== "bash") return undefined;
+  const command = event.input.command;
+  if (typeof command !== "string") return undefined;
+  const warning = bazelWarning(command, ctx.cwd, home);
+  if (!warning) return undefined;
+  if (ctx.hasUI) ctx.ui.notify("Raw go command in Sheer workspace; Bazel warning sent to the agent", "warning");
+  return { content: [...event.content, { type: "text", text: `\n\n⚠️ ${warning}` }] };
 }
 
-export const _test = { splitSegments, parseGoInvocation, translateArgs };
+export default function (pi: ExtensionAPI) {
+  pi.on("tool_result", (event, ctx) => warnOnToolResult(event, ctx));
+}
+
+export const _test = { splitSegments, parseGoInvocation, translateArgs, warnOnToolResult };

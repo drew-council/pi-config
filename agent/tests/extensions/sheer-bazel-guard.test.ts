@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { findRepositoryRoot, isSheerWorkspace, sheerWorkspaceFor } from "../../extensions/shared/sheer-workspace.js";
-import guardExtension, { _test, guardCommand } from "../../extensions/sheer-bazel-guard.js";
+import guardExtension, { _test, bazelWarning } from "../../extensions/sheer-bazel-guard.js";
 
 // A fake home with the Sheer checkout, a linked worktree, and unrelated repositories.
 const home = mkdtempSync(join(tmpdir(), "pi-sheer-guard-"));
@@ -23,7 +23,7 @@ mkdirSync(join(other, ".git"), { recursive: true });
 mkdirSync(join(personal, ".git"), { recursive: true });
 mkdirSync(scratch, { recursive: true });
 
-const guard = (command: string, cwd = sheer) => guardCommand(command, cwd, home);
+const guard = (command: string, cwd = sheer) => bazelWarning(command, cwd, home);
 
 describe("workspace detection", () => {
   test("recognizes the main checkout, nested directories, and linked worktrees", () => {
@@ -94,7 +94,7 @@ describe("command parsing", () => {
 
 describe("guidance", () => {
   test("translates package paths into labels relative to the repository root", () => {
-    expect(guard("go test ./internal/claims/...")).toContain("Use instead: bazel test //internal/claims/...");
+    expect(guard("go test ./internal/claims/...")).toContain("Prefer: bazel test //internal/claims/...");
     expect(guard("go test internal/claims/...")).toContain("bazel test //internal/claims/...");
     expect(guard("go test ./...")).toContain("bazel test //...");
     expect(guard("go test ./internal/claims")).toContain("bazel test //internal/claims:all");
@@ -102,7 +102,7 @@ describe("guidance", () => {
     expect(guard("go test ./...", join(sheer, "internal"))).toContain("bazel test //internal/...");
     expect(guard("cd internal/claims && go test ./...")).toContain("bazel test //internal/claims/...");
     expect(guard("go test ./internal/claims/claims_test.go")).toContain("bazel test //internal/claims:all");
-    expect(guard("go build ./cmd/local/...", worktree)).toContain("Use instead: bazel build //cmd/local/...");
+    expect(guard("go build ./cmd/local/...", worktree)).toContain("Prefer: bazel build //cmd/local/...");
     expect(guard("go build ./cmd/local/... ./internal/...")).toContain("bazel build //cmd/local/... //internal/...");
   });
 
@@ -117,14 +117,14 @@ describe("guidance", () => {
   test("routes vet, generate, and run to their project-standard replacements", () => {
     const vet = guard("go vet ./internal/claims/...");
     expect(vet).toContain("nogo");
-    expect(vet).toContain("Use instead: bazel build //internal/claims/... (or scripts/golangci-lint.sh run)");
+    expect(vet).toContain("Prefer: bazel build //internal/claims/... (or scripts/golangci-lint.sh run)");
     expect(guard("go generate ./internal/claims/...")).toContain(
-      "Use instead (from the repository root): make generate PKG=./internal/claims/...",
+      "Prefer (from the repository root): make generate PKG=./internal/claims/...",
     );
     expect(guard("go generate ./...")).toMatch(/make generate$/);
     expect(guard("go generate ./...", join(sheer, "internal"))).toContain("make generate PKG=./internal/...");
     expect(guard("go generate -run cmd/graph/gen ./...", worktree)).toMatch(/make generate$/);
-    expect(guard("go run ./cmd/local")).toContain("Use instead: bazel run //cmd/local:all");
+    expect(guard("go run ./cmd/local")).toContain("Prefer: bazel run //cmd/local:all");
   });
 
   test("keeps arguments that point outside the repository out of the suggestion", () => {
@@ -142,7 +142,7 @@ describe("scope", () => {
     expect(guard("(cd /tmp && go build .) && go version")).toBeUndefined();
   });
 
-  test("blocks go commands that cd into Sheer or back out of a subshell", () => {
+  test("warns about go commands that cd into Sheer or back out of a subshell", () => {
     expect(guard(`cd ~/work/sheer && go test ./...`, scratch)).toContain("bazel test //...");
     expect(guard("(cd /tmp && go build .) && go test ./...")).toContain("bazel test //...");
     expect(guard("go version && go test ./internal/claims")).toContain("bazel test //internal/claims:all");
@@ -166,30 +166,41 @@ describe("scope", () => {
   });
 });
 
-describe("tool_call hook", () => {
-  type Handler = (
-    event: { toolName: string; input: Record<string, unknown> },
-    ctx: { cwd: string; hasUI: boolean; ui: { notify(message: string, level: string): void } },
-  ) => { block: true; reason: string } | undefined;
+describe("tool_result hook", () => {
+  type Content = { type: "text"; text: string }[];
+  type Event = { toolName: string; input: Record<string, unknown>; content: Content };
 
-  function register(): Handler {
-    let handler: Handler | undefined;
-    guardExtension({
-      on(event: string, candidate: Handler) {
-        if (event === "tool_call") handler = candidate;
-      },
-    } as unknown as ExtensionAPI);
-    if (!handler) throw new Error("guard did not register a tool_call hook");
-    return handler;
+  function setup(cwd: string) {
+    const notifications: string[] = [];
+    const ctx = { cwd, hasUI: true, ui: { notify: (message: string) => notifications.push(message) } };
+    const run = (event: Event) => _test.warnOnToolResult(event as never, ctx as never, home);
+    return { run, notifications };
   }
 
-  test("blocks only bash calls, and only outside the real Sheer checkout when the cwd is elsewhere", () => {
-    const handler = register();
-    const notifications: string[] = [];
-    const ctx = { cwd: scratch, hasUI: true, ui: { notify: (message: string) => notifications.push(message) } };
-    expect(handler({ toolName: "bash", input: { command: "go test ./..." } }, ctx)).toBeUndefined();
-    expect(handler({ toolName: "edit", input: { path: "main.go" } }, ctx)).toBeUndefined();
-    expect(handler({ toolName: "bash", input: { command: 42 } }, ctx)).toBeUndefined();
-    expect(notifications).toEqual([]);
+  test("registers on tool_result", () => {
+    const events: string[] = [];
+    guardExtension({ on: (event: string) => events.push(event) } as unknown as ExtensionAPI);
+    expect(events).toEqual(["tool_result"]);
+  });
+
+  test("appends the Bazel warning to raw go command output in Sheer", () => {
+    const { run, notifications } = setup(sheer);
+    const output = { type: "text" as const, text: "ok  \tgithub.com/sheer/internal/claims" };
+    const result = run({ toolName: "bash", input: { command: "go test ./internal/claims" }, content: [output] });
+    expect(result?.content?.[0]).toEqual(output);
+    const warning = result?.content?.[1];
+    expect(warning?.type === "text" ? warning.text : "").toStartWith("\n\n⚠️ This repository uses Bazel");
+    expect(warning?.type === "text" ? warning.text : "").toContain("Prefer: bazel test //internal/claims:all");
+    expect(notifications).toHaveLength(1);
+  });
+
+  test("leaves other tools, non-go commands, and commands outside Sheer untouched", () => {
+    const outside = setup(scratch);
+    expect(outside.run({ toolName: "bash", input: { command: "go test ./..." }, content: [] })).toBeUndefined();
+    expect(outside.run({ toolName: "edit", input: { path: "main.go" }, content: [] })).toBeUndefined();
+    expect(outside.run({ toolName: "bash", input: { command: 42 }, content: [] })).toBeUndefined();
+    const inside = setup(sheer);
+    expect(inside.run({ toolName: "bash", input: { command: "go version" }, content: [] })).toBeUndefined();
+    expect([...outside.notifications, ...inside.notifications]).toEqual([]);
   });
 });
