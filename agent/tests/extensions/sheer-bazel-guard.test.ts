@@ -21,7 +21,10 @@ mkdirSync(join(worktree, "cmd", "local"), { recursive: true });
 writeFileSync(join(worktree, ".git"), `gitdir: ${join(sheer, ".git", "worktrees", "feature")}\n`);
 mkdirSync(join(other, ".git"), { recursive: true });
 mkdirSync(join(personal, ".git"), { recursive: true });
+for (const repo of [sheer, other, personal]) writeFileSync(join(repo, ".git", "HEAD"), "ref: refs/heads/main\n");
 mkdirSync(scratch, { recursive: true });
+// A `.git` directory without HEAD is not a checkout, so it must not capture scratch.
+mkdirSync(join(home, ".git"), { recursive: true });
 
 const guard = (command: string, cwd = sheer) => bazelWarning(command, cwd, home);
 

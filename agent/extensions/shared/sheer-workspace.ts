@@ -13,7 +13,8 @@ export type RepositoryRoot = {
  * Walks up from `dir` to the nearest checkout. Linked worktrees
  * (`<main>/.git/worktrees/<name>`) and submodules (`<main>/.git/modules/<path>`)
  * have a `.git` file whose `gitdir:` line resolves back to the main repository.
- * A `.git` file that cannot be parsed ends the walk with no result.
+ * A `.git` file that cannot be parsed ends the walk with no result. Like git,
+ * a `.git` directory without `HEAD` (e.g. a stray empty `/tmp/.git`) is skipped.
  */
 export function findRepositoryRoot(dir: string): RepositoryRoot | undefined {
   let directory = resolve(dir);
@@ -21,7 +22,11 @@ export function findRepositoryRoot(dir: string): RepositoryRoot | undefined {
     const gitPath = join(directory, ".git");
     try {
       const stat = statSync(gitPath);
-      if (stat.isDirectory()) return { root: directory, main: directory };
+      if (stat.isDirectory()) {
+        if (statSync(join(gitPath, "HEAD"), { throwIfNoEntry: false })?.isFile()) {
+          return { root: directory, main: directory };
+        }
+      }
       if (stat.isFile()) {
         const gitdir = /^gitdir:\s*(\S.*\S|\S)\s*$/m.exec(readFileSync(gitPath, "utf8"))?.[1];
         if (!gitdir) return undefined;

@@ -1,4 +1,4 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { AnyModel } from "@earendil-works/pi-ai";
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { type ProfileName, providerAllowed } from "../shared/accounts.js";
 
@@ -111,7 +111,7 @@ export function installModelPolicy(
   target.checkAuth = async function (provider, options) {
     return providerVisible(provider) ? check.call(this, provider, options) : undefined;
   };
-  target.getAuth = async function (modelOrProvider: string | Model<Api>, options) {
+  target.getAuth = async function (modelOrProvider: string | AnyModel, options) {
     const provider = typeof modelOrProvider === "string" ? modelOrProvider : modelOrProvider.provider;
     if (!providerVisible(provider)) {
       throw new Error(`${provider} is disabled in the ${state.profile()} profile. Use /profile or /log-me-in.`);
@@ -119,7 +119,7 @@ export function installModelPolicy(
     if (typeof modelOrProvider !== "string" && !visible(modelOrProvider)) {
       throw new Error(`${modelOrProvider.provider}/${modelOrProvider.id} is unavailable by model policy.`);
     }
-    return auth.call(this, modelOrProvider as Model<Api>, options);
+    return auth.call(this, modelOrProvider as AnyModel, options);
   };
   target.login = async function (provider, type, interaction) {
     if (!providerVisible(provider)) throw new Error(`Use /profile before logging into ${provider}.`);

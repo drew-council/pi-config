@@ -115,6 +115,7 @@ describe("directory-based startup profiles", () => {
     // A regular checkout outside profile roots adopts nothing.
     const plain = join(home, "repos", "other");
     mkdirSync(join(plain, ".git"), { recursive: true });
+    writeFileSync(join(plain, ".git", "HEAD"), "ref: refs/heads/main\n");
     expect(profileForDirectory(plain, home)).toBeUndefined();
 
     // Broken or malformed gitfiles fall back to the saved default.

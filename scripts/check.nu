@@ -47,7 +47,7 @@ def main [] {
     ^bun test --tsconfig-override ./tsconfig.runtime.json ./agent/tests
   }
 
-  let go_dir = ($repo | path join "agent" "skills" "github" "sheer-gh")
+  let go_dir = ($repo | path join "agent" "skills" "sheer-gh" "sheer-gh")
   say "Running Go vet"
   ^go -C $go_dir vet ./...
 
