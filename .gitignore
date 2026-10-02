@@ -46,3 +46,4 @@ agent/model-usage.jsonl
 agent/local-settings.json
 agent/models-store.json
 
+/agent/pi-subagents/last-seen-version.json
