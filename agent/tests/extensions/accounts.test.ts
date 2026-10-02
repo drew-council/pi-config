@@ -26,7 +26,7 @@ import {
   readAccountKey,
   readJson,
   runtimeStore,
-  VERTEX_ENV,
+  vertexEnv,
 } from "../../extensions/shared/accounts.js";
 
 const directories: string[] = [];
@@ -58,7 +58,7 @@ const oauth = {
   expires: 9_999_999_999_999,
   accountId: "test",
 };
-const vertex = { type: "api_key", env: { ...VERTEX_ENV } };
+const vertex = { type: "api_key", env: vertexEnv() };
 const execResult = (stdout: string) => ({ stdout, stderr: "", code: 0, killed: false });
 
 describe("directory-based startup profiles", () => {
@@ -207,6 +207,31 @@ describe("account initialization", () => {
     const personal = await runtimeFor(agent, "personal");
     expect(await importMissingAccountKey(personal, agent, "personal")).toBeTrue();
     expect(readJson(profileAuthPath(agent, "personal"))["google-vertex"]).toEqual(vertex);
+  });
+
+  test("re-pins Vertex with the ADC file so auth skips the GCE metadata probe", async () => {
+    const { root, agent } = fixture();
+    const adc = join(root, "adc.json");
+    writeFileSync(adc, "{}");
+    const previous = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = adc;
+    try {
+      ensureProfileFiles(agent);
+      const oldPin = { GOOGLE_CLOUD_PROJECT: "optimum-nebula-375615", GOOGLE_CLOUD_LOCATION: "global" };
+      json(profileAuthPath(agent, "work"), { "google-vertex": { type: "api_key", env: oldPin } });
+      const work = await runtimeFor(agent, "work");
+      expect(await importMissingAccountKey(work, agent, "work")).toBeTrue();
+      expect(
+        (readJson(profileAuthPath(agent, "work")) as { "google-vertex": { env: unknown } })["google-vertex"].env,
+      ).toEqual({
+        ...oldPin,
+        GOOGLE_APPLICATION_CREDENTIALS: adc,
+      });
+      expect(await importMissingAccountKey(work, agent, "work")).toBeFalse();
+    } finally {
+      if (previous === undefined) delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
+      else process.env.GOOGLE_APPLICATION_CREDENTIALS = previous;
+    }
   });
 
   test("missing, unexpanded, and malformed secret files fail without exposing contents", () => {

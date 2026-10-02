@@ -106,6 +106,15 @@ export const vertexAdcPath = (): string =>
   process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim() ||
   join(homedir(), ".config", "gcloud", "application_default_credentials.json");
 export const hasVertexAdc = (): boolean => existsSync(vertexAdcPath());
+/**
+ * The pinned Vertex credential env. Naming the ADC file explicitly makes
+ * google-auth-library load it as a key file instead of running ADC discovery,
+ * which (with no project in process.env or gcloud config) probes the GCE
+ * metadata server for ~14s on every request, since pi builds a new client per
+ * call. Credential env reaches only the provider, not process.env or bash.
+ */
+export const vertexEnv = (): Record<string, string> =>
+  hasVertexAdc() ? { ...VERTEX_ENV, GOOGLE_APPLICATION_CREDENTIALS: vertexAdcPath() } : { ...VERTEX_ENV };
 
 /**
  * Pins Vertex to Sheer Health's project in the bound profile's credential store,
@@ -117,7 +126,7 @@ export async function saveVertex(runtime: ModelRuntime, signal = AbortSignal.tim
     "google-vertex",
     async () => {
       signal.throwIfAborted();
-      return { type: "api_key", env: { ...VERTEX_ENV } } as Credential;
+      return { type: "api_key", env: vertexEnv() } as Credential;
     },
     { signal },
   );
@@ -125,10 +134,11 @@ export async function saveVertex(runtime: ModelRuntime, signal = AbortSignal.tim
 
 const isPinnedVertex = (credential: Credential | undefined): boolean => {
   const value = credential as { key?: unknown; env?: Record<string, unknown> } | undefined;
+  const expected = vertexEnv();
   return (
     value?.key === undefined &&
-    value?.env?.GOOGLE_CLOUD_PROJECT === VERTEX_ENV.GOOGLE_CLOUD_PROJECT &&
-    value?.env?.GOOGLE_CLOUD_LOCATION === VERTEX_ENV.GOOGLE_CLOUD_LOCATION
+    Object.keys(value?.env ?? {}).length === Object.keys(expected).length &&
+    Object.entries(expected).every(([name, setting]) => value?.env?.[name] === setting)
   );
 };
 
