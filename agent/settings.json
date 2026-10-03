@@ -1,9 +1,7 @@
 {
-  "lastChangelogVersion": "0.99.1",
+  "lastChangelogVersion": "1.0.0",
   "extensions": [],
-  "npmCommand": [
-    "bun"
-  ],
+  "npmCommand": ["bun"],
   "packages": [
     "npm:pi-web-access",
     {

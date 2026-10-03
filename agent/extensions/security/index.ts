@@ -423,7 +423,14 @@ export function createSecurityExtension(pi: ExtensionAPI, options: SecurityOptio
     const reviewer = new AbortController();
     const dialog = new AbortController();
     let autoApproved: ReviewVerdict | undefined;
-    // Runs concurrently with the dialog; errors surface as a notification only.
+    let blocked = false;
+    const markBlocked = () => {
+      if (blocked || reviewer.signal.aborted) return;
+      blocked = true;
+      pi.events.emit("herdr:blocked", { active: true, label: "Waiting for command confirmation" });
+    };
+    // Keep Herdr working while the reviewer runs; only request attention when
+    // the reviewer needs a user decision or cannot complete the check.
     void review(ctx, request, AbortSignal.any([reviewer.signal, AbortSignal.timeout(REVIEW_TIMEOUT_MS)]))
       .then((verdict) => {
         if (reviewer.signal.aborted) return;
@@ -431,14 +438,16 @@ export function createSecurityExtension(pi: ExtensionAPI, options: SecurityOptio
           autoApproved = verdict;
           dialog.abort();
         } else {
+          markBlocked();
           ctx.ui.notify(`Reviewer wants your decision: ${verdict.reason}`, "warning");
         }
       })
       .catch((error) => {
-        if (!reviewer.signal.aborted) ctx.ui.notify(`Command reviewer unavailable: ${errorMessage(error)}`, "warning");
+        if (!reviewer.signal.aborted) {
+          markBlocked();
+          ctx.ui.notify(`Command reviewer unavailable: ${errorMessage(error)}`, "warning");
+        }
       });
-
-    pi.events.emit("herdr:blocked", { active: true, label: "Waiting for command confirmation" });
     try {
       const ok = await ctx.ui.confirm(`Dangerous command: ${desc}`, command, { signal: dialog.signal });
       reviewer.abort();
@@ -449,7 +458,8 @@ export function createSecurityExtension(pi: ExtensionAPI, options: SecurityOptio
       if (!ok) return { block: true, reason: `Blocked ${desc} by user` };
       return undefined;
     } finally {
-      pi.events.emit("herdr:blocked", { active: false });
+      reviewer.abort();
+      if (blocked) pi.events.emit("herdr:blocked", { active: false });
     }
   }
 

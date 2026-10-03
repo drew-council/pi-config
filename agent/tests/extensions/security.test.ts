@@ -135,7 +135,13 @@ test("dangerous commands require an affirmative UI confirmation", async () => {
 
   const emittedEvents: Array<{ name: string; data: unknown }> = [];
   const eventHandler = registerSecurityHook(emittedEvents);
-  const eventContext = context({ hasUI: true, confirm: true });
+  const eventContext = context({
+    hasUI: true,
+    confirm: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return true;
+    },
+  });
   assert.equal(await runBash(eventHandler, "git push --force origin main", eventContext.ctx), undefined);
   assert.deepEqual(emittedEvents, [
     { name: "herdr:blocked", data: { active: true, label: "Waiting for command confirmation" } },
@@ -182,7 +188,8 @@ test("sudo is always hard-blocked without a prompt", async () => {
 
 test("the background reviewer dismisses the dialog when it approves", async () => {
   const seen: Array<{ command: string; gate: string; cwd: string }> = [];
-  const handler = registerSecurityHook([], async (_ctx, request) => {
+  const emittedEvents: Array<{ name: string; data: unknown }> = [];
+  const handler = registerSecurityHook(emittedEvents, async (_ctx, request) => {
     seen.push({ ...request, gate: request.gate.name });
     return { decision: "approve", reason: "scratch dir under /tmp" };
   });
@@ -190,6 +197,7 @@ test("the background reviewer dismisses the dialog when it approves", async () =
   const pending = context({ hasUI: true });
   assert.equal(await runBash(handler, "cd /tmp && rm -rf scratch", pending.ctx), undefined);
   assert.equal(pending.confirmations.length, 1);
+  assert.deepEqual(emittedEvents, [], "auto-approval should never mark Herdr blocked");
   assert.deepEqual(seen, [
     { command: "cd /tmp && rm -rf scratch", gate: "recursive delete", cwd: "/workspace/project" },
   ]);
@@ -211,6 +219,48 @@ test("the background reviewer leaves the decision to the user when unsure", asyn
   const approved = context({ hasUI: true, confirm: true });
   assert.equal(await runBash(handler, "rm -rf src", approved.ctx), undefined);
 });
+
+for (const outcome of ["ask_user", "error"] as const) {
+  test(`Herdr only becomes blocked after reviewer ${outcome}`, async () => {
+    const emittedEvents: Array<{ name: string; data: unknown }> = [];
+    let finishReview!: () => void;
+    let answer!: (approved: boolean) => void;
+    const handler = registerSecurityHook(
+      emittedEvents,
+      () =>
+        new Promise<ReviewVerdict>((resolve, reject) => {
+          finishReview = () => {
+            if (outcome === "error") reject(new Error("review failed"));
+            else resolve({ decision: "ask_user", reason: "needs approval" });
+          };
+        }),
+    );
+    const pending = context({
+      hasUI: true,
+      confirm: () =>
+        new Promise<boolean>((resolve) => {
+          answer = resolve;
+        }),
+    });
+    const result = runBash(handler, "rm -rf src", pending.ctx);
+    assert.equal(pending.confirmations.length, 1);
+    assert.deepEqual(emittedEvents, []);
+    assert.deepEqual(pending.notifications, []);
+
+    finishReview();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(emittedEvents, [
+      { name: "herdr:blocked", data: { active: true, label: "Waiting for command confirmation" } },
+    ]);
+    assert.equal(pending.notifications.length, 1);
+    assert.equal(pending.notifications[0]?.level, "warning");
+
+    answer(true);
+    assert.equal(await result, undefined);
+    assert.deepEqual(emittedEvents[1], { name: "herdr:blocked", data: { active: false } });
+    assert.equal(emittedEvents.length, 2);
+  });
+}
 
 test("a user answer cancels the background review", async () => {
   let reviewSignal: AbortSignal | undefined;
