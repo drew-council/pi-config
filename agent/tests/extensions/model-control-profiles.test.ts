@@ -266,3 +266,90 @@ describe("startup profile binding", () => {
     expect(runtime.credentials.store.authPath).toBe(profileAuthPath(agent, "work"));
   });
 });
+
+describe("serial catalog refresh", () => {
+  type Gate = { promise: Promise<void>; settle: (error?: Error) => void };
+  const gate = (): Gate => {
+    let settle: (error?: Error) => void = () => {};
+    const promise = new Promise<void>((resolve, reject) => {
+      settle = (error) => (error ? reject(error) : resolve());
+    });
+    return { promise, settle };
+  };
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  class QueuedRuntime {
+    inFlight = 0;
+    overlapped = false;
+    finished: string[] = [];
+    async refresh(options: { label: string; gate: Gate }) {
+      this.inFlight++;
+      this.overlapped ||= this.inFlight > 1;
+      try {
+        await options.gate.promise;
+        this.finished.push(options.label);
+      } finally {
+        this.inFlight--;
+      }
+    }
+  }
+  type Target = Parameters<typeof _test.installSerialRefresh>[0];
+
+  test("holds back later refreshes and is reload-safe", async () => {
+    const prototype = QueuedRuntime.prototype as unknown as Target;
+    _test.installSerialRefresh(prototype);
+    const wrapper = prototype.refresh;
+    _test.installSerialRefresh(prototype);
+    expect(prototype.refresh).toBe(wrapper);
+
+    const runtime = new QueuedRuntime();
+    const gates = { register: gate(), native: gate(), awaited: gate() };
+    // Provider registration starts refreshes Pi never awaits, immediately
+    // before the awaited refresh that ends service construction.
+    void runtime.refresh({ label: "register-provider", gate: gates.register });
+    void runtime.refresh({ label: "register-native", gate: gates.native });
+    const awaited = runtime.refresh({ label: "awaited", gate: gates.awaited });
+
+    // Both later refreshes are ready to finish, but the first still holds the queue.
+    gates.awaited.settle();
+    gates.native.settle();
+    await flush();
+    expect(runtime.finished).toEqual([]);
+
+    gates.register.settle();
+    await awaited;
+    expect(runtime.overlapped).toBeFalse();
+    expect(runtime.finished).toEqual(["register-provider", "register-native", "awaited"]);
+  });
+
+  test("queues per runtime, so one session's refreshes never wait on another's", async () => {
+    _test.installSerialRefresh(QueuedRuntime.prototype as unknown as Target);
+    const blocking = new QueuedRuntime();
+    const other = new QueuedRuntime();
+    const blocked = gate();
+    const pending = blocking.refresh({ label: "blocked", gate: blocked });
+    const ready = gate();
+    ready.settle();
+
+    await other.refresh({ label: "independent", gate: ready });
+    expect(other.finished).toEqual(["independent"]);
+    expect(blocking.finished).toEqual([]);
+
+    blocked.settle();
+    await pending;
+  });
+
+  test("a rejected refresh does not wedge the queue", async () => {
+    _test.installSerialRefresh(QueuedRuntime.prototype as unknown as Target);
+    const runtime = new QueuedRuntime();
+    const failing = gate();
+    const rejected = runtime.refresh({ label: "fails", gate: failing });
+    failing.settle(new Error("catalog unreachable"));
+    await expect(rejected).rejects.toThrow("catalog unreachable");
+
+    const ready = gate();
+    ready.settle();
+    await runtime.refresh({ label: "after-failure", gate: ready });
+    expect(runtime.finished).toEqual(["after-failure"]);
+  });
+});

@@ -46,7 +46,7 @@ import {
 } from "../shared/accounts.js";
 import { showModelEffortPicker } from "./picker.js";
 import { type ModelEffortPreference, readProfileDefault, writeProfileDefault } from "./preferences.js";
-import { installRuntimeAdapters, installStartupProfileBinding } from "./runtime-adapter.js";
+import { installRuntimeAdapters, installSerialRefresh, installStartupProfileBinding } from "./runtime-adapter.js";
 import { createActualUseRecorder, readRecentUsage } from "./usage.js";
 
 export function getRuntime(registry: ModelRegistry): ModelRuntime {
@@ -646,4 +646,4 @@ export default function modelControl(pi: ExtensionAPI) {
   });
 }
 
-export const _test = { installStartupProfileBinding };
+export const _test = { installSerialRefresh, installStartupProfileBinding };
