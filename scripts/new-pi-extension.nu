@@ -18,7 +18,7 @@ def command-exists [command: string] {
 }
 
 def fail [message: string] {
-  error make { msg: $message }
+  error make {msg: $message}
 }
 
 def main [
@@ -116,9 +116,9 @@ test("exports an extension factory", () => {
       test: "bun test"
       prepublishOnly: "bun run check && npm pack --dry-run"
     }
-    publishConfig: { access: "public" }
-    pi: { extensions: ["./src/index.ts"] }
-    peerDependencies: { "@earendil-works/pi-coding-agent": "*" }
+    publishConfig: {access: "public"}
+    pi: {extensions: ["./src/index.ts"]}
+    peerDependencies: {"@earendil-works/pi-coding-agent": "*"}
     devDependencies: {
       "@earendil-works/pi-coding-agent": $pi_version
     }
@@ -127,8 +127,8 @@ test("exports an extension factory", () => {
     $base_manifest
   } else {
     $base_manifest
-    | insert repository { type: "git", url: $"git+($repository_url)" }
-    | insert bugs { url: $"https://github.com/($github_repo)/issues" }
+    | insert repository {type: "git" url: $"git+($repository_url)"}
+    | insert bugs {url: $"https://github.com/($github_repo)/issues"}
     | insert homepage $"https://github.com/($github_repo)#readme"
   }
   $manifest | to json --indent 2 | $"($in)\n" | save ($target | path join "package.json")
@@ -211,7 +211,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check
       - name: Verify release tag
-        run: test "${GITHUB_REF_NAME#v}" = "$(node -p "require('./package.json').version")"
+        run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
       - run: npm publish
 '#
   | save ($target | path join ".github" "workflows" "publish.yml")
@@ -246,7 +246,8 @@ SOFTWARE.
 '#
   | save ($target | path join "LICENSE")
 
-  r##'# __PACKAGE__
+  # Plain single quotes: tree-sitter-nu misparses `#` inside raw strings.
+  '# __PACKAGE__
 
 __DESCRIPTION__.
 
@@ -282,7 +283,7 @@ Publishing the GitHub release runs the checks and publishes the matching package
 ## License
 
 MIT
-'##
+'
   | str replace --all "__PACKAGE__" $package_name
   | str replace --all "__DESCRIPTION__" $description
   | save ($target | path join "README.md")
