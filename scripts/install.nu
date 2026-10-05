@@ -8,6 +8,7 @@
 # - applies patch-package patches from ./agent/patches to Pi-managed npm packages
 # - applies git patches from ./agent/git-patches to Pi-managed git packages
 # - updates/installs Pi-managed npm packages with Bun from agent/settings.json
+# - removes peer-installed Pi SDK copies that would shadow the host's SDK
 # - initializes isolated work/personal accounts, reusing gh, gcloud ADC (Vertex AI), and existing Codex logins
 # - generates the local personal secret file from its committed 1Password template
 # - verifies that Go and Neovim are available for the GitHub CLI and embedded prompt editor
@@ -90,6 +91,27 @@ def migrate-agent-packages-to-bun [agent_dir: string] {
 
   if ($legacy_lock | path exists) {
     rm $legacy_lock
+  }
+}
+
+# Pi provides its SDK packages (@earendil-works/*) to extensions virtually. On-disk
+# copies installed as peer dependencies shadow them for extensions under
+# agent/npm, and an npm-layout SDK inside the compiled Pi binary resolves assets
+# like themes from the wrong place (breaking detached subagent runners).
+def prune-agent-peer-dependencies [agent_dir: string] {
+  let package_dir = ($agent_dir | path join "npm")
+  let sdk_dir = ($package_dir | path join "node_modules" "@earendil-works")
+
+  if not ($sdk_dir | path exists) {
+    return
+  }
+
+  say "Reinstalling Pi-managed packages without peer dependencies"
+  rm -rf ($package_dir | path join "node_modules")
+  ^bun install --cwd $package_dir --omit=peer
+
+  if ($sdk_dir | path exists) {
+    error make {msg: $"Peer dependencies are still installed after reinstalling: ($sdk_dir)"}
   }
 }
 
@@ -255,6 +277,8 @@ def main [
     say "Updating/installing Pi-managed packages from settings"
     ^pi update --extensions
   }
+
+  prune-agent-peer-dependencies $agent_dir
 
   apply-agent-npm-patches $bun_dir $agent_dir
 
