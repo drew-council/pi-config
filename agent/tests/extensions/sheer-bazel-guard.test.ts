@@ -97,7 +97,7 @@ describe("command parsing", () => {
 
 describe("guidance", () => {
   test("translates package paths into labels relative to the repository root", () => {
-    expect(guard("go test ./internal/claims/...")).toContain("Prefer: bazel test //internal/claims/...");
+    expect(guard("go test ./internal/claims/...")).toContain("Run instead: bazel test //internal/claims/...");
     expect(guard("go test internal/claims/...")).toContain("bazel test //internal/claims/...");
     expect(guard("go test ./...")).toContain("bazel test //...");
     expect(guard("go test ./internal/claims")).toContain("bazel test //internal/claims:all");
@@ -105,7 +105,7 @@ describe("guidance", () => {
     expect(guard("go test ./...", join(sheer, "internal"))).toContain("bazel test //internal/...");
     expect(guard("cd internal/claims && go test ./...")).toContain("bazel test //internal/claims/...");
     expect(guard("go test ./internal/claims/claims_test.go")).toContain("bazel test //internal/claims:all");
-    expect(guard("go build ./cmd/local/...", worktree)).toContain("Prefer: bazel build //cmd/local/...");
+    expect(guard("go build ./cmd/local/...", worktree)).toContain("Run instead: bazel build //cmd/local/...");
     expect(guard("go build ./cmd/local/... ./internal/...")).toContain("bazel build //cmd/local/... //internal/...");
   });
 
@@ -120,14 +120,16 @@ describe("guidance", () => {
   test("routes vet, generate, and run to their project-standard replacements", () => {
     const vet = guard("go vet ./internal/claims/...");
     expect(vet).toContain("nogo");
-    expect(vet).toContain("Prefer: bazel build //internal/claims/... (or scripts/golangci-lint.sh run)");
+    expect(vet).toContain("Run instead: bazel build //internal/claims/... (or scripts/golangci-lint.sh run)");
     expect(guard("go generate ./internal/claims/...")).toContain(
-      "Prefer (from the repository root): make generate PKG=./internal/claims/...",
+      "Run instead: make generate PKG=./internal/claims/... (from the repo root)",
     );
-    expect(guard("go generate ./...")).toMatch(/make generate$/);
+    expect(guard("go generate ./...")).toContain("Run instead: make generate (from the repo root)");
     expect(guard("go generate ./...", join(sheer, "internal"))).toContain("make generate PKG=./internal/...");
-    expect(guard("go generate -run cmd/graph/gen ./...", worktree)).toMatch(/make generate$/);
-    expect(guard("go run ./cmd/local")).toContain("Prefer: bazel run //cmd/local:all");
+    expect(guard("go generate -run cmd/graph/gen ./...", worktree)).toContain(
+      "Run instead: make generate (from the repo root)",
+    );
+    expect(guard("go run ./cmd/local")).toContain("Run instead: bazel run //cmd/local:all");
   });
 
   test("keeps arguments that point outside the repository out of the suggestion", () => {
@@ -192,8 +194,10 @@ describe("tool_result hook", () => {
     const result = run({ toolName: "bash", input: { command: "go test ./internal/claims" }, content: [output] });
     expect(result?.content?.[0]).toEqual(output);
     const warning = result?.content?.[1];
-    expect(warning?.type === "text" ? warning.text : "").toStartWith("\n\n⚠️ This repository uses Bazel");
-    expect(warning?.type === "text" ? warning.text : "").toContain("Prefer: bazel test //internal/claims:all");
+    expect(warning?.type === "text" ? warning.text : "").toStartWith(
+      "\n\n⚠️ NOT VALID: raw `go test` output does not count",
+    );
+    expect(warning?.type === "text" ? warning.text : "").toContain("Run instead: bazel test //internal/claims:all");
     expect(notifications).toHaveLength(1);
   });
 

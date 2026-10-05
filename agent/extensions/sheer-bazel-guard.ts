@@ -260,39 +260,34 @@ const unique = <T>(items: T[]): T[] => [...new Set(items)];
 function guidance(invocation: GoInvocation, translation: Translation): string {
   const targets = translation.labels.join(" ") || "//path/to/package/...";
   const patterns = translation.goPatterns.join(" ");
-  switch (invocation.subcommand) {
-    case "test": {
-      const flags = translation.flags.length > 0 ? ` ${translation.flags.join(" ")}` : "";
-      return [
-        "This repository uses Bazel: test flags, environment, data dependencies, and skips come from BUILD.bazel, so raw `go test` can report false failures and misses the Bazel cache.",
-        `Prefer: bazel test ${targets}${flags}`,
-      ].join("\n");
+  const [reason, replacement] = ((): [string, string] => {
+    switch (invocation.subcommand) {
+      case "test": {
+        const flags = translation.flags.length > 0 ? ` ${translation.flags.join(" ")}` : "";
+        return ["test flags, env, data deps, and skips live in BUILD.bazel", `bazel test ${targets}${flags}`];
+      }
+      case "build":
+        return ["it skips the nogo analyzers", `bazel build ${targets}`];
+      case "vet":
+        return [
+          "it does not run nogo, the project's analyzers",
+          `bazel build ${targets} (or scripts/golangci-lint.sh run)`,
+        ];
+      case "run":
+        return ["binaries are built through Bazel", `bazel run ${translation.labels[0] ?? "//cmd/<binary>"}`];
+      case "generate": {
+        const scope = patterns === "./..." || patterns === "" ? "" : ` PKG=${patterns}`;
+        return ["directives need the freshly built `graph` binary", `make generate${scope} (from the repo root)`];
+      }
+      default:
+        return ["this repo builds through Bazel", `bazel build ${targets}`];
     }
-    case "build":
-      return [
-        "This repository uses Bazel: raw `go build` bypasses Bazel's build cache and nogo analyzers.",
-        `Prefer: bazel build ${targets}`,
-      ].join("\n");
-    case "run":
-      return [
-        "This repository uses Bazel: binaries are built and run through Bazel, not raw `go run`.",
-        `Prefer: bazel run ${translation.labels[0] ?? "//cmd/<binary>"}`,
-      ].join("\n");
-    case "vet":
-      return [
-        "This repository uses Bazel: nogo analyzers run during bazel build and test, so raw `go vet` is not the project check.",
-        `Prefer: bazel build ${targets} (or scripts/golangci-lint.sh run)`,
-      ].join("\n");
-    case "generate": {
-      const scope = patterns === "./..." || patterns === "" ? "" : ` PKG=${patterns}`;
-      return [
-        "Direct `go generate` may fail or produce stale output here: the directives need a freshly built `graph` on PATH, which only the Make target provides.",
-        `Prefer (from the repository root): make generate${scope}`,
-      ].join("\n");
-    }
-    default:
-      return `This repository uses Bazel; prefer it over raw \`go ${invocation.subcommand}\`.`;
-  }
+  })();
+  return [
+    `NOT VALID: raw \`go ${invocation.subcommand}\` output does not count in this Bazel repo, even when it succeeds (${reason}).`,
+    `Run instead: ${replacement}`,
+    "Do not report results from the command above, and use the Bazel/Make form for every later Go check here.",
+  ].join("\n");
 }
 
 /** Returns the warning for the first raw Go command that should go through Bazel, or undefined when there is none. */

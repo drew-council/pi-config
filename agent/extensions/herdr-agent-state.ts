@@ -10,8 +10,7 @@ import path from "node:path";
 
 const HERDR_ENV = process.env.HERDR_ENV;
 const socketPath = process.env.HERDR_SOCKET_PATH;
-const socketEndpoint =
-  process.platform === "win32" && socketPath ? `\\\\.\\pipe\\${socketPath}` : socketPath;
+const socketEndpoint = process.platform === "win32" && socketPath ? `\\\\.\\pipe\\${socketPath}` : socketPath;
 const paneId = process.env.HERDR_PANE_ID;
 const source = "herdr:pi";
 
@@ -75,10 +74,7 @@ function updateSessionRef(ctx: any): void {
   try {
     const file = ctx?.sessionManager?.getSessionFile?.();
     currentAgentSessionPath =
-      typeof file === "string" &&
-      (path.posix.isAbsolute(file) || path.win32.isAbsolute(file))
-        ? file
-        : undefined;
+      typeof file === "string" && (path.posix.isAbsolute(file) || path.win32.isAbsolute(file)) ? file : undefined;
   } catch {
     currentAgentSessionPath = undefined;
   }
