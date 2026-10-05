@@ -1,3 +1,0 @@
-#!/bin/sh
-set -eu
-exec go run -C "$(dirname "$0")/.." . --cwd "$PWD" "$@"
