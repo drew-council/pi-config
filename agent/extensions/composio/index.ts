@@ -6,14 +6,14 @@ import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil
 import { Type } from "typebox";
 import { updateActiveTools } from "../shared/tool-activation.js";
 import { type ComposioConnection, connectComposio } from "./client.js";
-import { readComposioKey, readComposioPolicy } from "./config.js";
+import { type ComposioPolicy, readComposioKey, readComposioPolicy } from "./config.js";
 
-const ENABLED_BY_DEFAULT = false;
 const TOOL_NAMES = ["composio_search_tools", "composio_manage_connections", "composio_execute_tool"];
+const DISABLED_REASON = "Composio is disabled. Run /composio to enable it for this session.";
 const CODEMODE_ONLY_REASON =
   "Composio tools are only callable from codemode scripts. Call codemode and await tools.composio_search_tools(), tools.composio_execute_tool(), or tools.composio_manage_connections() inside the script.";
 const CODEMODE_GUIDANCE =
-  "Composio tools are not declared directly; call them only from codemode scripts. In codemode, await tools.composio_search_tools(), tools.composio_execute_tool(), or tools.composio_manage_connections(). Calls return the decoded Composio response object, not a JSON string or an MCP content wrapper. The data shape depends on the discovered tool. Await discovery before dependent calls; independent calls may use Promise.allSettled(). Return only the fields needed by the task. Failures may reject; do not automatically retry actions that could already have changed an app.";
+  "Composio tools are not declared directly; call them only from codemode scripts. In codemode, await tools.composio_search_tools(), tools.composio_execute_tool(), or tools.composio_manage_connections(). Calls return the decoded Composio response object, not a JSON string or an MCP content wrapper. The data shape depends on the discovered tool. Await discovery before dependent calls; independent calls may use Promise.allSettled(). Return only the fields needed by the task. Transient gateway errors are already retried; other failures reject, and actions that could already have changed an app must not be retried automatically.";
 const COMPOSIO_NAMESPACE = {
   name: "composio",
   description: "Search schemas and use the user's connected apps through the policy-restricted Composio connector.",
@@ -28,37 +28,68 @@ const COMPOSIO_OUTPUT_SCHEMA = Type.Object(
   { additionalProperties: true, description: "Decoded Composio response, preserving all service fields." },
 );
 
+export interface ComposioConfig {
+  apiKey: string;
+  policy: ComposioPolicy;
+}
+
 interface ComposioExtensionOptions {
-  connect?: (signal: AbortSignal) => Promise<ComposioConnection>;
+  /** Reads the key and policy when the user enables Composio. */
+  loadConfig?: () => ComposioConfig;
+  /** Opens the connection on the first call after enabling. */
+  connect?: (config: ComposioConfig, signal: AbortSignal) => Promise<ComposioConnection>;
 }
 
 export function registerComposio(pi: ExtensionAPI, options: ComposioExtensionOptions = {}): void {
   const agentDir = getAgentDir();
-  const connect =
-    options.connect ??
-    ((signal: AbortSignal) =>
-      connectComposio(
-        readComposioKey(join(agentDir, "..", "secrets", "personal.json")),
-        readComposioPolicy(join(agentDir, "composio.json")),
-        signal,
-      ));
+  const loadConfig =
+    options.loadConfig ??
+    (() => ({
+      apiKey: readComposioKey(join(agentDir, "..", "secrets", "personal.json")),
+      policy: readComposioPolicy(join(agentDir, "composio.json")),
+    }));
+  const connect = options.connect ?? ((config, signal) => connectComposio(config.apiKey, config.policy, signal));
   const signals = new AsyncLocalStorage<AbortSignal>();
-  let connection: ComposioConnection | undefined;
-  let pending: Promise<void> | undefined;
-  let attempt: AbortController | undefined;
-  let generation = 0;
+  // Set while enabled. Enabling is local; the connection opens on the first call and is shared afterwards.
+  let enabled: { config: ComposioConfig; abort: AbortController; connection?: Promise<ComposioConnection> } | undefined;
 
-  const requireConnection = (): ComposioConnection => {
-    if (!connection)
-      throw new Error("Composio is disabled. The user must run /composio to enable it for this session.");
-    return connection;
+  const connection = (): Promise<ComposioConnection> => {
+    const current = enabled;
+    if (!current) return Promise.reject(new Error(DISABLED_REASON));
+    if (!current.connection) {
+      const opening = Promise.resolve()
+        .then(() => connect(current.config, current.abort.signal))
+        .catch((error) => {
+          // A failed connection is retried by the next call.
+          if (current.connection === opening) current.connection = undefined;
+          throw error;
+        });
+      current.connection = opening;
+    }
+    return current.connection;
   };
+
+  // Wait for the shared connection; each call's own cancellation ends only its wait.
+  const connected = (): Promise<ComposioConnection> => {
+    const signal = signals.getStore();
+    if (!signal) return connection();
+    if (signal.aborted) return Promise.reject(signal.reason);
+    return new Promise((resolve, reject) => {
+      const abort = () => reject(signal.reason);
+      signal.addEventListener("abort", abort, { once: true });
+      connection()
+        .then(resolve, reject)
+        .finally(() => signal.removeEventListener("abort", abort));
+    });
+  };
+
   const tools = new PiProvider({ catchErrors: false }).createSessionTools({
-    search: ({ query, toolkits }) => requireConnection().search(query, toolkits, signals.getStore()),
-    execute: (slug, args, options) => requireConnection().execute(slug, args, options?.account, signals.getStore()),
+    search: async ({ query, toolkits }) => (await connected()).search(query, toolkits, signals.getStore()),
+    execute: async (slug, args, options) =>
+      (await connected()).execute(slug, args, options?.account, signals.getStore()),
     hooks: {
-      manageConnections: (ctx) =>
-        requireConnection().manageConnections(ctx.request.toolkits, ctx.request.reinitiateAll, signals.getStore()),
+      manageConnections: async (ctx) =>
+        (await connected()).manageConnections(ctx.request.toolkits, ctx.request.reinitiateAll, signals.getStore()),
     },
     includeWorkbenchTools: false,
   });
@@ -78,7 +109,7 @@ export function registerComposio(pi: ExtensionAPI, options: ComposioExtensionOpt
       "Composio calls in codemode return decoded response objects; do not JSON.parse them. Await discovery before dependent calls.",
     ],
     execute: async (id, params, signal, onUpdate, ctx) => {
-      requireConnection();
+      if (!enabled) throw new Error(DISABLED_REASON);
       const result = await signals.run(signal, () => tool.execute(id, params, signal, onUpdate, ctx));
       // PiProvider keeps the decoded payload in details.result independently of its text formatter.
       const response = (result.details as PiToolDetails).result;
@@ -88,106 +119,74 @@ export function registerComposio(pi: ExtensionAPI, options: ComposioExtensionOpt
       return { ...result, structuredContent: response as JsonValue };
     },
   }));
+
   // Hidden tools are unreachable; codemode tools are callable from scripts but never declared to the model.
-  let exposure: "hidden" | "codemode" | undefined;
-  const setExposure = (next: "hidden" | "codemode") => {
-    if (exposure === next) return;
-    exposure = next;
-    for (const definition of definitions) pi.registerTool({ ...definition, exposure: next });
+  let exposed: boolean | undefined;
+  const expose = (on: boolean) => {
+    if (exposed === on) return;
+    exposed = on;
+    for (const definition of definitions) pi.registerTool({ ...definition, exposure: on ? "codemode" : "hidden" });
   };
-  setExposure("hidden");
+  expose(false);
 
-  const disable = async (ctx: ExtensionContext) => {
-    generation += 1;
-    attempt?.abort();
-    attempt = undefined;
-    pending = undefined;
-    const previous = connection;
-    connection = undefined;
-    setExposure("hidden");
-    updateActiveTools(pi, { remove: TOOL_NAMES });
-    ctx.ui.setStatus("composio", undefined);
-    await previous?.close().catch(() => {});
-  };
-
-  const enable = async (ctx: ExtensionContext) => {
-    if (connection) {
-      ctx.ui.notify("Composio is already connected for this session.", "info");
-      return;
+  const enable = (ctx: ExtensionContext) => {
+    if (enabled) return ctx.ui.notify("Composio is already on for this session.", "info");
+    let config: ComposioConfig;
+    try {
+      config = loadConfig();
+    } catch (error) {
+      return ctx.ui.notify(error instanceof Error ? error.message : "Could not read the Composio config.", "error");
     }
-    if (pending) return pending;
-    const current = ++generation;
-    const controller = new AbortController();
-    attempt = controller;
-    ctx.ui.setStatus("composio", ctx.ui.theme.fg("dim", "Composio connecting…"));
-    pending = Promise.resolve().then(async () => {
-      try {
-        const connected = await connect(controller.signal);
-        if (generation !== current) {
-          await connected.close();
-          return;
-        }
-        connection = connected;
-        setExposure("codemode");
-        updateActiveTools(pi, { add: ["codemode"] });
-        ctx.ui.setStatus("composio", ctx.ui.theme.fg("success", "Composio connected"));
-        ctx.ui.notify(`Composio connected (${connected.policy.toolkits.join(", ")}).`, "info");
-      } catch (error) {
-        if (generation !== current) return;
-        connection = undefined;
-        setExposure("hidden");
-        ctx.ui.setStatus("composio", undefined);
-        ctx.ui.notify(error instanceof Error ? error.message : "Could not connect to Composio.", "error");
-      } finally {
-        if (generation === current) {
-          pending = undefined;
-          attempt = undefined;
-        }
-      }
-    });
-    return pending;
+    enabled = { config, abort: new AbortController() };
+    expose(true);
+    updateActiveTools(pi, { add: ["codemode"], remove: TOOL_NAMES });
+    ctx.ui.setStatus("composio", ctx.ui.theme.fg("success", "Composio on"));
+    ctx.ui.notify(`Composio on (${config.policy.toolkits.join(", ")}).`, "info");
   };
 
-  pi.on("session_start", async (_event, ctx) => {
-    await disable(ctx);
-    if (ENABLED_BY_DEFAULT) await enable(ctx);
-  });
-  pi.on("session_shutdown", async (_event, ctx) => disable(ctx));
+  const disable = (ctx: ExtensionContext) => {
+    const previous = enabled;
+    enabled = undefined;
+    expose(false);
+    ctx.ui.setStatus("composio", undefined);
+    if (!previous) return;
+    previous.abort.abort();
+    previous.connection?.then((open) => open.close()).catch(() => {});
+  };
+
+  pi.on("session_start", (_event, ctx) => disable(ctx));
+  pi.on("session_shutdown", (_event, ctx) => disable(ctx));
   pi.on("tool_call", (event) => {
     if (!TOOL_NAMES.includes(event.toolName)) return;
-    if (!connection) {
-      return { block: true, reason: "Composio is disabled. Run /composio to enable it for this session." };
-    }
+    if (!enabled) return { block: true, reason: DISABLED_REASON };
     // Nested calls carry the calling tool's id; model-issued calls (including tool_search loads) do not.
     if (!event.parentToolCallId) return { block: true, reason: CODEMODE_ONLY_REASON };
   });
   pi.on("before_agent_start", (event) => {
-    if (!connection) return;
+    if (!enabled) return;
     return {
-      systemPrompt: `${event.systemPrompt}\n\n${createPiComposioSystemPrompt()}\nAllowed Composio toolkits: ${connection.policy.toolkits.join(", ")}.\nFor missing schemas, use composio_execute_tool with toolSlug COMPOSIO_GET_TOOL_SCHEMAS and arguments {tool_slugs: [exact tool slugs]}.\nConnection management lists accounts by default; reinitiate_all=true starts an OAuth connection.\n${CODEMODE_GUIDANCE}`,
+      systemPrompt: `${event.systemPrompt}\n\n${createPiComposioSystemPrompt()}\nAllowed Composio toolkits: ${enabled.config.policy.toolkits.join(", ")}.\nFor missing schemas, use composio_execute_tool with toolSlug COMPOSIO_GET_TOOL_SCHEMAS and arguments {tool_slugs: [exact tool slugs]}.\nConnection management lists accounts by default; reinitiate_all=true starts an OAuth connection.\n${CODEMODE_GUIDANCE}`,
     };
   });
   pi.registerCommand("composio", {
-    description: "Enable Composio for this session; /composio off disconnects, /composio status shows state",
+    description: "Enable Composio for this session; /composio off disables it, /composio status shows state",
     getArgumentCompletions: (prefix) =>
       ["on", "off", "status"].filter((value) => value.startsWith(prefix)).map((value) => ({ value, label: value })),
     handler: async (args, ctx) => {
       switch (args.trim()) {
         case "":
         case "on":
-          await enable(ctx);
+          enable(ctx);
           break;
         case "off":
-          await disable(ctx);
+          disable(ctx);
           ctx.ui.notify("Composio disabled for this session.", "info");
           break;
         case "status":
           ctx.ui.notify(
-            connection
-              ? `Composio connected (${connection.policy.toolkits.join(", ")}).`
-              : pending
-                ? "Composio is connecting."
-                : "Composio is disabled. Run /composio to connect.",
+            enabled
+              ? `Composio is on (${enabled.config.policy.toolkits.join(", ")}).`
+              : "Composio is off. Run /composio to enable it.",
             "info",
           );
           break;

@@ -22,10 +22,11 @@ import {
 import {
   type ComposioConnection,
   createComposioConnection,
+  createRetryingFetch,
   decodeComposioResult,
 } from "../../extensions/composio/client.js";
 import { isComposioToolAllowed, readComposioKey, readComposioPolicy } from "../../extensions/composio/config.js";
-import { registerComposio } from "../../extensions/composio/index.js";
+import { type ComposioConfig, registerComposio } from "../../extensions/composio/index.js";
 
 const POLICY = { toolkits: ["gmail"], tools: {} };
 
@@ -53,7 +54,9 @@ function fakeConnection() {
   return { connection, calls, closes: () => closes };
 }
 
-function harness(connect?: (signal: AbortSignal) => Promise<ComposioConnection>) {
+function harness(
+  options: { connect?: (signal: AbortSignal) => Promise<ComposioConnection>; loadConfig?: () => ComposioConfig } = {},
+) {
   const fake = fakeConnection();
   let connects = 0;
   let active = ["read", "foreign"];
@@ -80,9 +83,10 @@ function harness(connect?: (signal: AbortSignal) => Promise<ComposioConnection>)
     },
   } as unknown as ExtensionAPI;
   registerComposio(pi, {
-    connect: (signal) => {
+    loadConfig: options.loadConfig ?? (() => ({ apiKey: "ck_test", policy: POLICY })),
+    connect: (_config, signal) => {
       connects += 1;
-      return connect ? connect(signal) : Promise.resolve(fake.connection);
+      return options.connect ? options.connect(signal) : Promise.resolve(fake.connection);
     },
   });
   return {
@@ -101,15 +105,14 @@ function harness(connect?: (signal: AbortSignal) => Promise<ComposioConnection>)
   };
 }
 
-test("Composio is off at startup and direct calls cannot activate it", async () => {
+test("Composio is off at startup and calls are rejected without connecting", async () => {
   const h = harness();
   await h.emit("session_start", { reason: "startup" });
-  assert.equal(h.connects(), 0);
   assert.deepEqual(h.active(), ["read", "foreign"]);
   assert.deepEqual(h.exposures(), ["hidden", "hidden", "hidden"]);
   assert.equal(h.statuses.at(-1), undefined);
   assert.equal(h.emit("before_agent_start", { systemPrompt: "base" }), undefined);
-  assert.deepEqual(h.emit("tool_call", { toolName: "composio_execute_tool" }), {
+  assert.deepEqual(h.emit("tool_call", { toolName: "composio_execute_tool", parentToolCallId: "parent" }), {
     block: true,
     reason: "Composio is disabled. Run /composio to enable it for this session.",
   });
@@ -118,77 +121,108 @@ test("Composio is off at startup and direct calls cannot activate it", async () 
   assert.deepEqual(h.calls, []);
 });
 
-test("the slash command connects once, updates the footer, and detaches without changing other tools", async () => {
+test("toggling is local; the first call connects once and later or concurrent calls share the connection", async () => {
   const h = harness();
   await h.emit("session_start");
   await h.command();
-  await h.command("on");
-  assert.equal(h.connects(), 1);
+  assert.equal(h.connects(), 0);
   assert.deepEqual(h.active(), ["read", "foreign", "codemode"]);
   assert.deepEqual(h.exposures(), ["codemode", "codemode", "codemode"]);
-  assert.equal(h.statuses.at(-1), "Composio connected");
+  assert.equal(h.statuses.at(-1), "Composio on");
   assert.match(
     (h.emit("before_agent_start", { systemPrompt: "base" }) as { systemPrompt: string }).systemPrompt,
-    /^base\n/,
+    /^base\n[\s\S]*Allowed Composio toolkits: gmail\./,
   );
+  await Promise.all([
+    h.runTool("composio_search_tools", { query: "inbox" }),
+    h.runTool("composio_search_tools", { query: "labels" }),
+  ]);
+  await h.command("on");
+  await h.runTool("composio_manage_connections", { toolkits: ["gmail"] });
+  assert.equal(h.connects(), 1);
+  assert.match(h.notifications.at(-1).message, /already on/);
+
   await h.command("off");
-  assert.deepEqual(h.active(), ["read", "foreign", "codemode"]);
   assert.deepEqual(h.exposures(), ["hidden", "hidden", "hidden"]);
+  await new Promise((done) => setImmediate(done));
   assert.equal(h.closes(), 1);
   assert.equal(h.statuses.at(-1), undefined);
   await h.command("status");
-  assert.match(h.notifications.at(-1).message, /disabled/);
+  assert.match(h.notifications.at(-1).message, /off/);
+  await h.command();
+  await h.runTool("composio_search_tools", { query: "inbox" });
+  assert.equal(h.connects(), 2);
+});
+
+test("a failed connection rejects that call and the next call connects again", async () => {
+  const fake = fakeConnection();
+  let attempts = 0;
+  const h = harness({
+    connect: () => {
+      if (++attempts === 1) throw new Error("Bad gateway");
+      return Promise.resolve(fake.connection);
+    },
+  });
+  await h.command();
+  await assert.rejects(h.runTool("composio_search_tools", { query: "inbox" }), /Bad gateway/);
+  assert.deepEqual(h.exposures(), ["codemode", "codemode", "codemode"]);
+  await h.runTool("composio_search_tools", { query: "inbox" });
+  assert.equal(attempts, 2);
+  assert.equal(fake.calls.length, 1);
+});
+
+test("configuration errors are reported when enabling and leave Composio off", async () => {
+  let attempts = 0;
+  const h = harness({
+    loadConfig: () => {
+      if (++attempts === 1) throw new Error("Missing composio.apiKey");
+      return { apiKey: "ck_test", policy: POLICY };
+    },
+  });
+  await h.command();
+  assert.deepEqual(h.notifications.at(-1), { message: "Missing composio.apiKey", level: "error" });
+  assert.deepEqual(h.exposures(), ["hidden", "hidden", "hidden"]);
+  assert.equal(h.statuses.at(-1), undefined);
+  await h.command();
+  assert.equal(h.statuses.at(-1), "Composio on");
+  assert.equal(h.connects(), 0);
 });
 
 test("new, resumed, forked, and reloaded sessions all require another slash command", async () => {
   for (const reason of ["new", "resume", "fork", "reload"]) {
     const h = harness();
     await h.command();
+    await h.runTool("composio_search_tools", { query: "inbox" });
     await h.emit("session_start", { reason });
-    assert.equal(h.connects(), 1);
+    await new Promise((done) => setImmediate(done));
     assert.equal(h.closes(), 1);
     assert.deepEqual(h.exposures(), ["hidden", "hidden", "hidden"]);
     await assert.rejects(h.runTool("composio_search_tools", { query: "inbox" }), /disabled/);
   }
 });
 
-test("a connection completed after session replacement is closed and never activated", async () => {
+test("disabling while connecting aborts the attempt and closes a connection that completes later", async () => {
   const fake = fakeConnection();
   let resolve: (connection: ComposioConnection) => void;
   let signal: AbortSignal;
-  const h = harness((requestSignal) => {
-    signal = requestSignal;
-    return new Promise((done) => {
-      resolve = done;
-    });
+  const h = harness({
+    connect: (requestSignal) => {
+      signal = requestSignal;
+      return new Promise((done) => {
+        resolve = done;
+      });
+    },
   });
-  const attaching = h.command();
+  await h.command();
+  const call = h.runTool("composio_search_tools", { query: "inbox" });
   await new Promise((done) => setImmediate(done));
-  await h.emit("session_start", { reason: "new" });
+  await h.command("off");
   assert.equal(signal.aborted, true);
   resolve(fake.connection);
-  await attaching;
+  await Promise.allSettled([call]);
+  await new Promise((done) => setImmediate(done));
   assert.equal(fake.closes(), 1);
-  assert.deepEqual(h.active(), ["read", "foreign"]);
   assert.deepEqual(h.exposures(), ["hidden", "hidden", "hidden"]);
-  assert.equal(h.statuses.at(-1), undefined);
-});
-
-test("a synchronous credential error leaves Composio off and permits a subsequent retry", async () => {
-  const fake = fakeConnection();
-  let attempts = 0;
-  const h = harness(() => {
-    if (++attempts === 1) throw new Error("Missing credential");
-    return Promise.resolve(fake.connection);
-  });
-  await h.command();
-  assert.equal(h.statuses.at(-1), undefined);
-  assert.deepEqual(h.active(), ["read", "foreign"]);
-  assert.equal(h.notifications.at(-1).level, "error");
-  assert.deepEqual(h.exposures(), ["hidden", "hidden", "hidden"]);
-  await h.command();
-  assert.equal(h.connects(), 2);
-  assert.equal(h.statuses.at(-1), "Composio connected");
 });
 
 test("connected Composio tools only accept calls issued by another tool such as codemode", async () => {
@@ -260,7 +294,7 @@ test("parallel Composio calls keep their individual cancellation signals and dec
       return { successful: true, data: { index: args.index, extra: [false, null, { count: 0 }] } };
     },
   };
-  const h = harness(async () => connection);
+  const h = harness({ connect: async () => connection });
   await h.command();
   const results = await Promise.all(
     signals.map((signal, index) =>
@@ -284,12 +318,42 @@ test("cancelling a Composio tool aborts its connection request and rejects rathe
       });
     },
   };
-  const h = harness(async () => connection);
+  const h = harness({ connect: async () => connection });
   await h.command();
+  await h.runTool("composio_search_tools", { query: "inbox" });
   const call = h.runTool("composio_execute_tool", { toolSlug: "GMAIL_FETCH_EMAILS" }, controller.signal);
   const rejected = assert.rejects(call, /cancelled/);
+  await new Promise((done) => setImmediate(done));
   controller.abort(new Error("cancelled"));
   await rejected;
+});
+
+test("cancelling a call that is waiting for the connection ends that call without cancelling the connection", async () => {
+  const fake = fakeConnection();
+  let resolve: (connection: ComposioConnection) => void;
+  let connectSignal: AbortSignal;
+  const h = harness({
+    connect: (signal) => {
+      connectSignal = signal;
+      return new Promise((done) => {
+        resolve = done;
+      });
+    },
+  });
+  await h.command();
+  const controller = new AbortController();
+  const cancelled = h.runTool("composio_search_tools", { query: "inbox" }, controller.signal);
+  const waiting = h.runTool("composio_search_tools", { query: "labels" });
+  await new Promise((done) => setImmediate(done));
+  controller.abort(new Error("cancelled"));
+  await assert.rejects(cancelled, /cancelled/);
+  assert.equal(connectSignal.aborted, false);
+  resolve(fake.connection);
+  await waiting;
+  assert.deepEqual(
+    fake.calls.map((call) => call.args[0]),
+    ["labels"],
+  );
 });
 
 test("the consumer adapter decodes JSON separately from appended prose", () => {
@@ -370,6 +434,43 @@ test("toolkit/action policy rejects forbidden app tools, schema lookups, and met
     ),
     false,
   );
+});
+
+test("gateway rejections are resent with backoff, other statuses are returned as is", async () => {
+  const statuses: number[] = [];
+  const responses = (codes: number[]) => {
+    const queue = [...codes];
+    return (async () => {
+      const status = queue.shift();
+      statuses.push(status);
+      return new Response(status === 202 ? null : "x", { status });
+    }) as unknown as typeof fetch;
+  };
+  const call = {
+    method: "POST",
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "COMPOSIO_MULTI_EXECUTE_TOOL" },
+    }),
+  };
+
+  assert.equal((await createRetryingFetch(responses([502, 503, 200]), [0, 0, 0])("u", call)).status, 200);
+  assert.deepEqual(statuses.splice(0), [502, 503, 200]);
+  assert.equal((await createRetryingFetch(responses([502, 502, 502]), [0, 0])("u", call)).status, 502);
+  assert.deepEqual(statuses.splice(0), [502, 502, 502]);
+  for (const status of [401, 500, 504]) {
+    assert.equal((await createRetryingFetch(responses([status, 200]), [0])("u", call)).status, status);
+    assert.deepEqual(statuses.splice(0), [status]);
+  }
+
+  const controller = new AbortController();
+  const retrying = createRetryingFetch(responses([502, 200]), [60_000])("u", { ...call, signal: controller.signal });
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort(new Error("cancelled"));
+  await assert.rejects(retrying, /cancelled/);
+  assert.deepEqual(statuses.splice(0), [502]);
 });
 
 test("MCP failures become execution errors and connection inspection uses the side-effect-free list action", async () => {
@@ -470,7 +571,11 @@ for (const mode of ["on", "only"] as const) {
         noContextFiles: true,
         extensionFactories: [
           createCodemodeExtension(),
-          (pi) => registerComposio(pi, { connect: async () => connection }),
+          (pi) =>
+            registerComposio(pi, {
+              loadConfig: () => ({ apiKey: "ck_test", policy: POLICY }),
+              connect: async () => connection,
+            }),
         ],
       });
       await resourceLoader.reload();

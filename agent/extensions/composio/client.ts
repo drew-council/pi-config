@@ -64,6 +64,40 @@ export function filterComposioSearch(value: unknown, policy: ComposioPolicy): un
   return { ...payload, data: filtered };
 }
 
+/** Backoff between resends of a request that Connect's edge rejected; about 15s in total. */
+const RETRY_DELAYS_MS = [250, 500, 1000, 1000, 2000, 2000, 3000, 3000];
+
+function delay(ms: number, signal?: AbortSignal | null): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const abort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
+/**
+ * Connect's Cloudflare edge rejects about half of authenticated requests with a fast 502, at any request rate.
+ * Those requests never reach Composio (rejected tool calls do not appear in the activity log), so any request,
+ * including an app action, can be resent. Other statuses are returned unchanged.
+ */
+export function createRetryingFetch(baseFetch: typeof fetch = fetch, delays = RETRY_DELAYS_MS): typeof fetch {
+  return (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    for (let attempt = 0; ; attempt++) {
+      const response = await baseFetch(input, init);
+      if ((response.status !== 502 && response.status !== 503) || attempt >= delays.length) return response;
+      await response.body?.cancel().catch(() => {});
+      await delay(delays[attempt], init?.signal);
+    }
+  }) as typeof fetch;
+}
+
 export async function connectComposio(
   apiKey: string,
   policy: ComposioPolicy,
@@ -72,21 +106,13 @@ export async function connectComposio(
   const client = new Client({ name: "pi-composio", version: "1.0.0" });
   const transport = new StreamableHTTPClientTransport(new URL("https://connect.composio.dev/mcp"), {
     requestInit: { headers: { "x-consumer-api-key": apiKey } },
+    fetch: createRetryingFetch(),
   });
   const safeError = (error: unknown) =>
     new Error((error instanceof Error ? error.message : String(error)).replaceAll(apiKey, "[REDACTED]"));
 
   try {
-    await client.connect(transport, { signal, timeout: 20_000 });
-    const tools = await client.listTools({}, { signal, timeout: 20_000 });
-    for (const name of [
-      "COMPOSIO_SEARCH_TOOLS",
-      "COMPOSIO_GET_TOOL_SCHEMAS",
-      "COMPOSIO_MULTI_EXECUTE_TOOL",
-      "COMPOSIO_MANAGE_CONNECTIONS",
-    ]) {
-      if (!tools.tools.some((tool) => tool.name === name)) throw new Error(`Composio is missing ${name}.`);
-    }
+    await client.connect(transport, { signal, timeout: 30_000 });
   } catch (error) {
     await client.close().catch(() => {});
     throw safeError(error);
@@ -98,7 +124,7 @@ export async function connectComposio(
       try {
         const response = await client.callTool({ name, arguments: args }, undefined, {
           signal: requestSignal,
-          timeout: 60_000,
+          timeout: 90_000,
         });
         return response as McpPayload;
       } catch (error) {

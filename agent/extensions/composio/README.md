@@ -7,20 +7,36 @@ and a For You consumer key are different credentials.
 
 ## Use
 
-- `/composio` or `/composio on`: connect and expose the tools to codemode for this session.
+- `/composio` or `/composio on`: expose the tools to codemode for this session.
 - `/composio off`: hide the tools and close the connection.
-- `/composio status`: show whether the connector is attached.
+- `/composio status`: show whether Composio is on.
 
-The final configuration is off by default, with no Composio network requests or
-secret reads until the slash command. The footer displays `Composio connected`
-after authentication and tool discovery succeed. Starting, resuming, forking, or
-reloading a session requires enabling it again. The agent cannot enable it by
-calling a tool; both tool exposure and execution guards enforce attachment.
+Composio is off by default, with no secret reads or network requests until the
+slash command. Toggling is local and instant: `/composio` reads the key and
+policy (reporting config errors immediately), shows `Composio on` in the footer,
+and exposes the tools. The connection opens on the first tool call and is shared
+by later and concurrent calls; if opening fails, that call rejects and the next
+call tries again. Starting, resuming, forking, or reloading a session requires
+enabling it again. The agent cannot enable it by calling a tool; both tool
+exposure and execution guards enforce this.
+
+Each Pi session has its own connection, and Connect's MCP endpoint is stateless,
+so any number of agents can use Composio at the same time.
 
 The tools are codemode-only. They are never declared to the model, and a
 `tool_call` guard blocks any call without a `parentToolCallId`, so a direct model
 call (including one loaded by `tool_search`) is rejected with a hint to use a
 codemode script instead.
+
+## Gateway errors
+
+Connect's Cloudflare edge rejects roughly half of authenticated requests with a
+fast (~300ms) 502, independent of request rate, HTTP version, edge IP, or client.
+Requests with an invalid key never fail this way. Rejected requests never reach
+Composio: in a test, 7 of 10 `GMAIL_GET_PROFILE` executions returned 200 and
+exactly 7 appeared in the dashboard's activity log. The client therefore resends
+any request, including app actions, after a 502 or 503, with backoff for up to
+about 15 seconds. Other statuses, including 504, are not retried.
 
 ## Credentials and installation
 
@@ -36,7 +52,7 @@ an optional Pi peer below 1.0, but its `defineTool` interface works with Pi 1.0.
 
 ## Apps and tool permissions
 
-Edit `agent/composio.json`, then disconnect/reconnect to load changes. Initially
+Edit `agent/composio.json`, then run `/composio off` and `/composio` to load changes. Initially
 only Gmail is allowed, including reading, drafting, sending, and label actions.
 An omitted `enable` list permits all actions in that toolkit; an empty `enable`
 list permits none. `disable` takes precedence.
@@ -76,11 +92,11 @@ separately because the service can append prose after its JSON payload.
 
 ## Codemode
 
-Run `/composio` after `/reload` to attach the connector. Its tools are registered
+Run `/composio` after `/reload` to enable the connector. Its tools are registered
 with `hidden` exposure while it is off, so scripts cannot discover or call them.
-Attaching re-registers them with `codemode` exposure (callable from scripts and
+Enabling re-registers them with `codemode` exposure (callable from scripts and
 listed in the `codemode` description, never declared directly) and activates
-`codemode` if needed. Detaching hides them again. This behaves the same with
+`codemode` if needed. Disabling hides them again. This behaves the same with
 `codemode.mode: "on"` and `"only"`.
 
 All three tools declare an output schema and return `structuredContent`. Scripts

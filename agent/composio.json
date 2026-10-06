@@ -1,4 +1,4 @@
 {
-  "toolkits": ["gmail"],
+  "toolkits": ["gmail", "discord", "googlecalendar"],
   "tools": {}
 }
