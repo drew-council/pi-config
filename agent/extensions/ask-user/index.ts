@@ -2028,6 +2028,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "ask_user",
+    exposure: "model-only",
     label: "Ask User",
     description:
       "Ask the user a question with optional multiple-choice answers. The user can always press Tab to add details to a selected option. Use this to gather information interactively. Ask exactly one focused question per call. Before calling, gather context with tools (read/web/ref) and pass a short summary via the context field.",
