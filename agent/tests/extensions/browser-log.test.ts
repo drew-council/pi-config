@@ -227,5 +227,5 @@ test("browser-log registers the structured tool without changing its default dir
   assert.equal(tools.length, 1);
   assert.equal(tools[0]?.name, "capture_browser_log");
   assert.deepEqual(tools[0]?.outputSchema, _test.createBrowserLogTool().outputSchema);
-  assert.equal(Object.hasOwn(tools[0], "exposure"), false);
+  assert.equal(tools[0]?.exposure, "direct");
 });

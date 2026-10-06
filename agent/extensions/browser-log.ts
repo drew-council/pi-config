@@ -744,6 +744,15 @@ function resultMessage(filePath: string, report: BrowserLogReport) {
 function createBrowserLogTool(capture = captureBrowserLog) {
   return {
     name: "capture_browser_log",
+    // Deferred exposure would bypass explicit active-tool selection/disablement.
+    exposure: "direct" as const,
+    namespace: {
+      name: "browser",
+      description: "Chromium debugging through Chrome DevTools Protocol.",
+      instructions:
+        "Capture console, exception, and browser logs from an inspectable tab without navigating it. Requires an existing CDP endpoint. The capture writes a JSON report; use filePath to read the full report. /browser-log remains available independently of model tool selection.",
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     label: "Capture Browser Log",
     description:
       "Capture console, exception, and browser log entries from the active Chromium tab via Chrome DevTools Protocol and save them to a structured JSON file.",
