@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "1.0.4",
   "extensions": [],
-  "defaultTools": ["+codemode"],
+  "defaultTools": ["+codemode", "+find", "+grep", "+ls"],
   "npmCommand": ["bun"],
   "packages": [
     "npm:pi-web-access",
