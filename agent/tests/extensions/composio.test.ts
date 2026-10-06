@@ -90,6 +90,7 @@ function harness(connect?: (signal: AbortSignal) => Promise<ComposioConnection>)
     tools,
     ctx,
     active: () => active,
+    exposures: () => [...tools.values()].map((tool) => tool.exposure),
     connects: () => connects,
     statuses,
     notifications,
@@ -105,7 +106,7 @@ test("Composio is off at startup and direct calls cannot activate it", async () 
   await h.emit("session_start", { reason: "startup" });
   assert.equal(h.connects(), 0);
   assert.deepEqual(h.active(), ["read", "foreign"]);
-  assert.ok([...h.tools.values()].every((tool) => tool.defaultActive === false && tool.exposure === "direct"));
+  assert.deepEqual(h.exposures(), ["hidden", "hidden", "hidden"]);
   assert.equal(h.statuses.at(-1), undefined);
   assert.equal(h.emit("before_agent_start", { systemPrompt: "base" }), undefined);
   assert.deepEqual(h.emit("tool_call", { toolName: "composio_execute_tool" }), {
@@ -123,14 +124,16 @@ test("the slash command connects once, updates the footer, and detaches without 
   await h.command();
   await h.command("on");
   assert.equal(h.connects(), 1);
-  assert.deepEqual(h.active(), ["read", "foreign", ...h.tools.keys()]);
+  assert.deepEqual(h.active(), ["read", "foreign", "codemode"]);
+  assert.deepEqual(h.exposures(), ["codemode", "codemode", "codemode"]);
   assert.equal(h.statuses.at(-1), "Composio connected");
   assert.match(
     (h.emit("before_agent_start", { systemPrompt: "base" }) as { systemPrompt: string }).systemPrompt,
     /^base\n/,
   );
   await h.command("off");
-  assert.deepEqual(h.active(), ["read", "foreign"]);
+  assert.deepEqual(h.active(), ["read", "foreign", "codemode"]);
+  assert.deepEqual(h.exposures(), ["hidden", "hidden", "hidden"]);
   assert.equal(h.closes(), 1);
   assert.equal(h.statuses.at(-1), undefined);
   await h.command("status");
@@ -144,7 +147,7 @@ test("new, resumed, forked, and reloaded sessions all require another slash comm
     await h.emit("session_start", { reason });
     assert.equal(h.connects(), 1);
     assert.equal(h.closes(), 1);
-    assert.deepEqual(h.active(), ["read", "foreign"]);
+    assert.deepEqual(h.exposures(), ["hidden", "hidden", "hidden"]);
     await assert.rejects(h.runTool("composio_search_tools", { query: "inbox" }), /disabled/);
   }
 });
@@ -167,6 +170,7 @@ test("a connection completed after session replacement is closed and never activ
   await attaching;
   assert.equal(fake.closes(), 1);
   assert.deepEqual(h.active(), ["read", "foreign"]);
+  assert.deepEqual(h.exposures(), ["hidden", "hidden", "hidden"]);
   assert.equal(h.statuses.at(-1), undefined);
 });
 
@@ -181,9 +185,22 @@ test("a synchronous credential error leaves Composio off and permits a subsequen
   assert.equal(h.statuses.at(-1), undefined);
   assert.deepEqual(h.active(), ["read", "foreign"]);
   assert.equal(h.notifications.at(-1).level, "error");
+  assert.deepEqual(h.exposures(), ["hidden", "hidden", "hidden"]);
   await h.command();
   assert.equal(h.connects(), 2);
   assert.equal(h.statuses.at(-1), "Composio connected");
+});
+
+test("connected Composio tools only accept calls issued by another tool such as codemode", async () => {
+  const h = harness();
+  await h.command();
+  for (const toolName of h.tools.keys()) {
+    const blocked = h.emit("tool_call", { toolName, toolCallId: "direct" }) as { block: boolean; reason: string };
+    assert.equal(blocked.block, true);
+    assert.match(blocked.reason, /only callable from codemode/);
+    assert.equal(h.emit("tool_call", { toolName, toolCallId: "parent/1", parentToolCallId: "parent" }), undefined);
+  }
+  assert.equal(h.emit("tool_call", { toolName: "read" }), undefined);
 });
 
 test("native Pi helpers preserve cancellation, account selection, arguments, and connection intent", async () => {
@@ -484,6 +501,8 @@ for (const mode of ["on", "only"] as const) {
       assert.deepEqual(calls, []);
       await session.prompt("/composio");
       assert.ok(session.getCallableToolNames().includes("composio_execute_tool"));
+      assert.ok(!session.getActiveToolNames().some((name) => name.startsWith("composio_")));
+      assert.ok(session.getActiveToolNames().includes("codemode"));
       const output = await runCodemode(
         session,
         `

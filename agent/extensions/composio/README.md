@@ -7,15 +7,20 @@ and a For You consumer key are different credentials.
 
 ## Use
 
-- `/composio` or `/composio on`: connect and activate the tools for this session.
-- `/composio off`: deactivate tools and close the connection.
+- `/composio` or `/composio on`: connect and expose the tools to codemode for this session.
+- `/composio off`: hide the tools and close the connection.
 - `/composio status`: show whether the connector is attached.
 
 The final configuration is off by default, with no Composio network requests or
 secret reads until the slash command. The footer displays `Composio connected`
 after authentication and tool discovery succeed. Starting, resuming, forking, or
 reloading a session requires enabling it again. The agent cannot enable it by
-calling a tool; both tool activation and execution guards enforce attachment.
+calling a tool; both tool exposure and execution guards enforce attachment.
+
+The tools are codemode-only. They are never declared to the model, and a
+`tool_call` guard blocks any call without a `parentToolCallId`, so a direct model
+call (including one loaded by `tool_search`) is rejected with a hint to use a
+codemode script instead.
 
 ## Credentials and installation
 
@@ -71,14 +76,17 @@ separately because the service can append prose after its JSON payload.
 
 ## Codemode
 
-Run `/composio` after `/reload` to attach the connector. Its tools remain direct
-and inactive until attachment, so scripts cannot discover or call them while it
-is off. They work with both `codemode.mode: "on"` and `"only"` once attached.
+Run `/composio` after `/reload` to attach the connector. Its tools are registered
+with `hidden` exposure while it is off, so scripts cannot discover or call them.
+Attaching re-registers them with `codemode` exposure (callable from scripts and
+listed in the `codemode` description, never declared directly) and activates
+`codemode` if needed. Detaching hides them again. This behaves the same with
+`codemode.mode: "on"` and `"only"`.
 
 All three tools declare an output schema and return `structuredContent`. Scripts
 receive the decoded Composio response object, exactly as stored in the tool's
 `details.result`. Do not call `JSON.parse()` on it or unwrap MCP `content` blocks.
-Direct tool calls retain the same formatted JSON text and result metadata.
+Tool results also keep the formatted JSON text and result metadata.
 Service fields are preserved; `data` depends on the discovered tool, and app
 execution retains the multi-execute service's `data.results` envelope.
 

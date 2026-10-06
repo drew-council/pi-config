@@ -10,8 +10,10 @@ import { readComposioKey, readComposioPolicy } from "./config.js";
 
 const ENABLED_BY_DEFAULT = false;
 const TOOL_NAMES = ["composio_search_tools", "composio_manage_connections", "composio_execute_tool"];
+const CODEMODE_ONLY_REASON =
+  "Composio tools are only callable from codemode scripts. Call codemode and await tools.composio_search_tools(), tools.composio_execute_tool(), or tools.composio_manage_connections() inside the script.";
 const CODEMODE_GUIDANCE =
-  "In codemode, await tools.composio_search_tools(), tools.composio_execute_tool(), or tools.composio_manage_connections(). Calls return the decoded Composio response object, not a JSON string or an MCP content wrapper. The data shape depends on the discovered tool. Await discovery before dependent calls; independent calls may use Promise.allSettled(). Return only the fields needed by the task. Failures may reject; do not automatically retry actions that could already have changed an app.";
+  "Composio tools are not declared directly; call them only from codemode scripts. In codemode, await tools.composio_search_tools(), tools.composio_execute_tool(), or tools.composio_manage_connections(). Calls return the decoded Composio response object, not a JSON string or an MCP content wrapper. The data shape depends on the discovered tool. Await discovery before dependent calls; independent calls may use Promise.allSettled(). Return only the fields needed by the task. Failures may reject; do not automatically retry actions that could already have changed an app.";
 const COMPOSIO_NAMESPACE = {
   name: "composio",
   description: "Search schemas and use the user's connected apps through the policy-restricted Composio connector.",
@@ -61,36 +63,39 @@ export function registerComposio(pi: ExtensionAPI, options: ComposioExtensionOpt
     includeWorkbenchTools: false,
   });
 
-  for (const tool of tools) {
-    pi.registerTool({
-      ...tool,
-      // Keep direct exposure: codemode/deferred tools remain callable even while inactive.
-      exposure: "direct",
-      defaultActive: ENABLED_BY_DEFAULT,
-      namespace: COMPOSIO_NAMESPACE,
-      outputSchema: COMPOSIO_OUTPUT_SCHEMA,
-      annotations: {
-        readOnlyHint: tool.name === "composio_search_tools",
-        destructiveHint: tool.name !== "composio_search_tools",
-        idempotentHint: tool.name === "composio_search_tools",
-        openWorldHint: true,
-      },
-      promptGuidelines: [
-        ...(tool.promptGuidelines ?? []),
-        "Composio calls in codemode return decoded response objects; do not JSON.parse them. Await discovery before dependent calls.",
-      ],
-      execute: async (id, params, signal, onUpdate, ctx) => {
-        requireConnection();
-        const result = await signals.run(signal, () => tool.execute(id, params, signal, onUpdate, ctx));
-        // PiProvider keeps the decoded payload in details.result independently of its text formatter.
-        const response = (result.details as PiToolDetails).result;
-        if (!response || typeof response !== "object" || Array.isArray(response)) {
-          throw new Error("Composio returned a non-object response.");
-        }
-        return { ...result, structuredContent: response as JsonValue };
-      },
-    });
-  }
+  const definitions = tools.map((tool) => ({
+    ...tool,
+    namespace: COMPOSIO_NAMESPACE,
+    outputSchema: COMPOSIO_OUTPUT_SCHEMA,
+    annotations: {
+      readOnlyHint: tool.name === "composio_search_tools",
+      destructiveHint: tool.name !== "composio_search_tools",
+      idempotentHint: tool.name === "composio_search_tools",
+      openWorldHint: true,
+    },
+    promptGuidelines: [
+      ...(tool.promptGuidelines ?? []),
+      "Composio calls in codemode return decoded response objects; do not JSON.parse them. Await discovery before dependent calls.",
+    ],
+    execute: async (id, params, signal, onUpdate, ctx) => {
+      requireConnection();
+      const result = await signals.run(signal, () => tool.execute(id, params, signal, onUpdate, ctx));
+      // PiProvider keeps the decoded payload in details.result independently of its text formatter.
+      const response = (result.details as PiToolDetails).result;
+      if (!response || typeof response !== "object" || Array.isArray(response)) {
+        throw new Error("Composio returned a non-object response.");
+      }
+      return { ...result, structuredContent: response as JsonValue };
+    },
+  }));
+  // Hidden tools are unreachable; codemode tools are callable from scripts but never declared to the model.
+  let exposure: "hidden" | "codemode" | undefined;
+  const setExposure = (next: "hidden" | "codemode") => {
+    if (exposure === next) return;
+    exposure = next;
+    for (const definition of definitions) pi.registerTool({ ...definition, exposure: next });
+  };
+  setExposure("hidden");
 
   const disable = async (ctx: ExtensionContext) => {
     generation += 1;
@@ -99,6 +104,7 @@ export function registerComposio(pi: ExtensionAPI, options: ComposioExtensionOpt
     pending = undefined;
     const previous = connection;
     connection = undefined;
+    setExposure("hidden");
     updateActiveTools(pi, { remove: TOOL_NAMES });
     ctx.ui.setStatus("composio", undefined);
     await previous?.close().catch(() => {});
@@ -122,13 +128,14 @@ export function registerComposio(pi: ExtensionAPI, options: ComposioExtensionOpt
           return;
         }
         connection = connected;
-        updateActiveTools(pi, { add: TOOL_NAMES });
+        setExposure("codemode");
+        updateActiveTools(pi, { add: ["codemode"] });
         ctx.ui.setStatus("composio", ctx.ui.theme.fg("success", "Composio connected"));
         ctx.ui.notify(`Composio connected (${connected.policy.toolkits.join(", ")}).`, "info");
       } catch (error) {
         if (generation !== current) return;
         connection = undefined;
-        updateActiveTools(pi, { remove: TOOL_NAMES });
+        setExposure("hidden");
         ctx.ui.setStatus("composio", undefined);
         ctx.ui.notify(error instanceof Error ? error.message : "Could not connect to Composio.", "error");
       } finally {
@@ -147,9 +154,12 @@ export function registerComposio(pi: ExtensionAPI, options: ComposioExtensionOpt
   });
   pi.on("session_shutdown", async (_event, ctx) => disable(ctx));
   pi.on("tool_call", (event) => {
-    if (TOOL_NAMES.includes(event.toolName) && !connection) {
+    if (!TOOL_NAMES.includes(event.toolName)) return;
+    if (!connection) {
       return { block: true, reason: "Composio is disabled. Run /composio to enable it for this session." };
     }
+    // Nested calls carry the calling tool's id; model-issued calls (including tool_search loads) do not.
+    if (!event.parentToolCallId) return { block: true, reason: CODEMODE_ONLY_REASON };
   });
   pi.on("before_agent_start", (event) => {
     if (!connection) return;
