@@ -1,13 +1,30 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "node:path";
-import { createPiComposioSystemPrompt, PiProvider } from "@composio/experimental";
+import { createPiComposioSystemPrompt, PiProvider, type PiToolDetails } from "@composio/experimental";
+import type { JsonValue } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { updateActiveTools } from "../shared/tool-activation.js";
 import { type ComposioConnection, connectComposio } from "./client.js";
 import { readComposioKey, readComposioPolicy } from "./config.js";
 
 const ENABLED_BY_DEFAULT = false;
 const TOOL_NAMES = ["composio_search_tools", "composio_manage_connections", "composio_execute_tool"];
+const CODEMODE_GUIDANCE =
+  "In codemode, await tools.composio_search_tools(), tools.composio_execute_tool(), or tools.composio_manage_connections(). Calls return the decoded Composio response object, not a JSON string or an MCP content wrapper. The data shape depends on the discovered tool. Await discovery before dependent calls; independent calls may use Promise.allSettled(). Return only the fields needed by the task. Failures may reject; do not automatically retry actions that could already have changed an app.";
+const COMPOSIO_NAMESPACE = {
+  name: "composio",
+  description: "Search schemas and use the user's connected apps through the policy-restricted Composio connector.",
+  instructions: `${createPiComposioSystemPrompt()}\n${CODEMODE_GUIDANCE}\nOnly the user can enable this connector with /composio. Local toolkit/action policy applies to every call, including schema lookups. COMPOSIO_GET_TOOL_SCHEMAS is the only executable meta-tool; remote Bash, workbench, and raw proxy access are unavailable. Connection management lists accounts by default; reinitiate_all=true starts OAuth.`,
+};
+const COMPOSIO_OUTPUT_SCHEMA = Type.Object(
+  {
+    successful: Type.Optional(Type.Boolean()),
+    data: Type.Optional(Type.Unknown({ description: "Service payload; its shape depends on the discovered tool." })),
+    error: Type.Optional(Type.Unknown()),
+  },
+  { additionalProperties: true, description: "Decoded Composio response, preserving all service fields." },
+);
 
 interface ComposioExtensionOptions {
   connect?: (signal: AbortSignal) => Promise<ComposioConnection>;
@@ -47,10 +64,30 @@ export function registerComposio(pi: ExtensionAPI, options: ComposioExtensionOpt
   for (const tool of tools) {
     pi.registerTool({
       ...tool,
+      // Keep direct exposure: codemode/deferred tools remain callable even while inactive.
+      exposure: "direct",
       defaultActive: ENABLED_BY_DEFAULT,
+      namespace: COMPOSIO_NAMESPACE,
+      outputSchema: COMPOSIO_OUTPUT_SCHEMA,
+      annotations: {
+        readOnlyHint: tool.name === "composio_search_tools",
+        destructiveHint: tool.name !== "composio_search_tools",
+        idempotentHint: tool.name === "composio_search_tools",
+        openWorldHint: true,
+      },
+      promptGuidelines: [
+        ...(tool.promptGuidelines ?? []),
+        "Composio calls in codemode return decoded response objects; do not JSON.parse them. Await discovery before dependent calls.",
+      ],
       execute: async (id, params, signal, onUpdate, ctx) => {
         requireConnection();
-        return signals.run(signal, () => tool.execute(id, params, signal, onUpdate, ctx));
+        const result = await signals.run(signal, () => tool.execute(id, params, signal, onUpdate, ctx));
+        // PiProvider keeps the decoded payload in details.result independently of its text formatter.
+        const response = (result.details as PiToolDetails).result;
+        if (!response || typeof response !== "object" || Array.isArray(response)) {
+          throw new Error("Composio returned a non-object response.");
+        }
+        return { ...result, structuredContent: response as JsonValue };
       },
     });
   }
@@ -117,7 +154,7 @@ export function registerComposio(pi: ExtensionAPI, options: ComposioExtensionOpt
   pi.on("before_agent_start", (event) => {
     if (!connection) return;
     return {
-      systemPrompt: `${event.systemPrompt}\n\n${createPiComposioSystemPrompt()}\nAllowed Composio toolkits: ${connection.policy.toolkits.join(", ")}.\nFor missing schemas, use composio_execute_tool with toolSlug COMPOSIO_GET_TOOL_SCHEMAS and arguments {tool_slugs: [exact tool slugs]}.\nConnection management lists accounts by default; reinitiate_all=true starts an OAuth connection.`,
+      systemPrompt: `${event.systemPrompt}\n\n${createPiComposioSystemPrompt()}\nAllowed Composio toolkits: ${connection.policy.toolkits.join(", ")}.\nFor missing schemas, use composio_execute_tool with toolSlug COMPOSIO_GET_TOOL_SCHEMAS and arguments {tool_slugs: [exact tool slugs]}.\nConnection management lists accounts by default; reinitiate_all=true starts an OAuth connection.\n${CODEMODE_GUIDANCE}`,
     };
   });
   pi.registerCommand("composio", {

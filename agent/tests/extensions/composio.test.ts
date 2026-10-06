@@ -3,12 +3,21 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import type {
-  ExtensionAPI,
-  ExtensionCommandContext,
-  ExtensionContext,
-  ExtensionToolContext,
-  ToolDefinition,
+import type { PiToolDetails } from "@composio/experimental";
+import {
+  type AgentSession,
+  createAgentSession,
+  createCodemodeExtension,
+  DefaultResourceLoader,
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+  type ExtensionContext,
+  type ExtensionToolContext,
+  initTheme,
+  ModelRuntime,
+  SessionManager,
+  SettingsManager,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import {
   type ComposioConnection,
@@ -96,7 +105,7 @@ test("Composio is off at startup and direct calls cannot activate it", async () 
   await h.emit("session_start", { reason: "startup" });
   assert.equal(h.connects(), 0);
   assert.deepEqual(h.active(), ["read", "foreign"]);
-  assert.ok([...h.tools.values()].every((tool) => tool.defaultActive === false));
+  assert.ok([...h.tools.values()].every((tool) => tool.defaultActive === false && tool.exposure === "direct"));
   assert.equal(h.statuses.at(-1), undefined);
   assert.equal(h.emit("before_agent_start", { systemPrompt: "base" }), undefined);
   assert.deepEqual(h.emit("tool_call", { toolName: "composio_execute_tool" }), {
@@ -195,6 +204,77 @@ test("native Pi helpers preserve cancellation, account selection, arguments, and
   ]);
 });
 
+test("all Composio tools expose decoded objects while preserving direct-call text and metadata", async () => {
+  const h = harness();
+  await h.command();
+  for (const [name, args] of [
+    ["composio_search_tools", { query: "inbox" }],
+    ["composio_execute_tool", { toolSlug: "GMAIL_FETCH_EMAILS", arguments: {} }],
+    ["composio_manage_connections", { toolkits: ["gmail"] }],
+  ] as const) {
+    const tool = h.tools.get(name);
+    const schema = tool.outputSchema as { type?: string; additionalProperties?: boolean };
+    assert.equal(schema.type, "object");
+    assert.equal(schema.additionalProperties, true);
+    assert.equal(tool.namespace.name, "composio");
+    assert.match(tool.namespace.instructions, /response object, not a JSON string/);
+    assert.ok(tool.promptGuidelines.some((guideline) => guideline.includes("decoded response objects")));
+    assert.equal(tool.annotations.readOnlyHint, name === "composio_search_tools");
+    assert.equal(tool.annotations.destructiveHint, name !== "composio_search_tools");
+    const result = await h.runTool(name, args);
+    assert.deepEqual(result.structuredContent, { successful: true });
+    const details = result.details as PiToolDetails;
+    assert.deepEqual(result.structuredContent, details.result);
+    assert.deepEqual(
+      JSON.parse(result.content[0].type === "text" ? result.content[0].text : ""),
+      result.structuredContent,
+    );
+    assert.equal(typeof details.slug, "string");
+  }
+});
+
+test("parallel Composio calls keep their individual cancellation signals and decoded responses", async () => {
+  const signals = [new AbortController().signal, new AbortController().signal];
+  const connection: ComposioConnection = {
+    ...fakeConnection().connection,
+    execute: async (_slug, args, _account, signal) => {
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(signal, signals[args.index as number]);
+      return { successful: true, data: { index: args.index, extra: [false, null, { count: 0 }] } };
+    },
+  };
+  const h = harness(async () => connection);
+  await h.command();
+  const results = await Promise.all(
+    signals.map((signal, index) =>
+      h.runTool("composio_execute_tool", { toolSlug: "GMAIL_FETCH_EMAILS", arguments: { index } }, signal),
+    ),
+  );
+  assert.deepEqual(
+    results.map((result) => result.structuredContent),
+    signals.map((_signal, index) => ({ successful: true, data: { index, extra: [false, null, { count: 0 }] } })),
+  );
+});
+
+test("cancelling a Composio tool aborts its connection request and rejects rather than returning success", async () => {
+  const controller = new AbortController();
+  const connection: ComposioConnection = {
+    ...fakeConnection().connection,
+    execute: async (_slug, _args, _account, signal) => {
+      assert.equal(signal, controller.signal);
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    },
+  };
+  const h = harness(async () => connection);
+  await h.command();
+  const call = h.runTool("composio_execute_tool", { toolSlug: "GMAIL_FETCH_EMAILS" }, controller.signal);
+  const rejected = assert.rejects(call, /cancelled/);
+  controller.abort(new Error("cancelled"));
+  await rejected;
+});
+
 test("the consumer adapter decodes JSON separately from appended prose", () => {
   assert.deepEqual(
     decodeComposioResult({
@@ -286,6 +366,159 @@ test("MCP failures become execution errors and connection inspection uses the si
   );
   await assert.rejects(connection.manageConnections(["gmail"], false), /Connection expired/);
 });
+
+async function runCodemode(
+  session: AgentSession,
+  code: string,
+  signal = new AbortController().signal,
+): Promise<string> {
+  const id = `composio-codemode-${session.sessionManager.getEntries().length}`;
+  // Seed the assistant call without making a provider request. Nested tools use Pi's real pipeline.
+  session.sessionManager.appendMessage({
+    role: "assistant",
+    api: "openai-responses",
+    provider: "openai",
+    model: "composio-test",
+    content: [{ type: "toolCall", id, name: "codemode", arguments: { code } }],
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "toolUse",
+    timestamp: Date.now(),
+  });
+  session.refreshContext();
+  const tool = session.agent.state.tools.find((tool) => tool.name === "codemode");
+  const result = await tool.execute(id, { code }, signal);
+  return result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
+}
+
+for (const mode of ["on", "only"] as const) {
+  test(`Composio works through the real codemode pipeline (${mode}) without bypassing activation or policy`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pi-composio-codemode-"));
+    let session: AgentSession | undefined;
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const connection = createComposioConnection(
+      { toolkits: ["gmail"], tools: { gmail: { enable: ["GMAIL_FETCH_EMAILS"] } } },
+      async (name, args) => {
+        calls.push({ name, args });
+        if (name === "COMPOSIO_SEARCH_TOOLS") {
+          return {
+            structuredContent: {
+              successful: true,
+              data: {
+                session: { id: "codemode-session" },
+                tool_schemas: { GMAIL_FETCH_EMAILS: {}, GMAIL_SEND_EMAIL: {} },
+              },
+            },
+            content: [{ type: "text", text: "Appended service guidance" }],
+          };
+        }
+        const tool = (
+          args.tools as Array<{ tool_slug: string; arguments: Record<string, unknown>; account?: string }>
+        )[0];
+        if (tool.arguments.q === "fail") return { isError: true, content: [{ type: "text", text: "App unavailable" }] };
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                successful: true,
+                data: {
+                  results: [
+                    { tool_slug: tool.tool_slug, response: { query: tool.arguments.q, account: tool.account } },
+                  ],
+                },
+              }),
+            },
+          ],
+        };
+      },
+      async () => {},
+    );
+    try {
+      const settingsManager = SettingsManager.inMemory({ defaultTools: ["+codemode"], codemode: { mode } });
+      const resourceLoader = new DefaultResourceLoader({
+        cwd: directory,
+        agentDir: directory,
+        settingsManager,
+        noExtensions: true,
+        noSkills: true,
+        noThemes: true,
+        noPromptTemplates: true,
+        noContextFiles: true,
+        extensionFactories: [
+          createCodemodeExtension(),
+          (pi) => registerComposio(pi, { connect: async () => connection }),
+        ],
+      });
+      await resourceLoader.reload();
+      assert.deepEqual(resourceLoader.getExtensions().errors, []);
+      const modelRuntime = await ModelRuntime.create({
+        authPath: join(directory, "auth.json"),
+        modelsPath: null,
+        modelsStorePath: join(directory, "models-store.json"),
+        refreshOnCreate: false,
+      });
+      ({ session } = await createAgentSession({
+        cwd: directory,
+        agentDir: directory,
+        settingsManager,
+        resourceLoader,
+        modelRuntime,
+        sessionManager: SessionManager.inMemory(directory),
+      }));
+      initTheme("dark", false);
+      await session.bindExtensions({});
+      assert.ok(!session.getCallableToolNames().some((name) => name.startsWith("composio_")));
+      const disabled = await runCodemode(
+        session,
+        'return ALL_TOOLS.filter(tool => tool.name.startsWith("composio_"));',
+      );
+      assert.match(disabled, /Script completed/);
+      assert.match(disabled, /Output:\s*\[\]/);
+      assert.deepEqual(calls, []);
+      await session.prompt("/composio");
+      assert.ok(session.getCallableToolNames().includes("composio_execute_tool"));
+      const output = await runCodemode(
+        session,
+        `
+        const namespace = await describeNamespace("composio");
+        const discovery = await tools.composio_search_tools({query: "Fetch inbox emails"});
+        const results = await Promise.allSettled([
+          ...["first", "second", "fail"].map(q => tools.composio_execute_tool({toolSlug: "GMAIL_FETCH_EMAILS", arguments: {q}, account: "personal"})),
+          tools.composio_execute_tool({toolSlug: "GMAIL_SEND_EMAIL", arguments: {}}),
+        ]);
+        return {namespace: namespace.name, schemas: Object.keys(discovery.data.tool_schemas), results: results.map(result => result.status === "fulfilled" ? result.value.data.results[0].response : {error: result.reason.message})};
+      `,
+      );
+      assert.match(output, /Script completed/);
+      assert.match(output, /"namespace":"composio"/);
+      assert.match(output, /"schemas":\["GMAIL_FETCH_EMAILS"\]/);
+      assert.match(output, /"query":"first","account":"personal"/);
+      assert.match(output, /"query":"second","account":"personal"/);
+      assert.match(output, /App unavailable/);
+      assert.match(output, /policy does not allow GMAIL_SEND_EMAIL/);
+      assert.equal(calls.length, 4);
+      for (const call of calls.slice(1)) assert.equal(call.args.session_id, "codemode-session");
+      await session.prompt("/composio off");
+      assert.ok(!session.getCallableToolNames().some((name) => name.startsWith("composio_")));
+      const afterOff = await runCodemode(
+        session,
+        'return ALL_TOOLS.filter(tool => tool.name.startsWith("composio_"));',
+      );
+      assert.match(afterOff, /Output:\s*\[\]/);
+      assert.equal(calls.length, 4);
+    } finally {
+      session?.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
 
 test("credential and policy readers reject unresolved secrets, malformed JSON, and misspelled policy fields", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-composio-test-"));
