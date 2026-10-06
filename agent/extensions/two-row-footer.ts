@@ -66,31 +66,58 @@ function alignSides(left: string, right: string, width: number): string {
 }
 
 export default function twoRowFooter(pi: ExtensionAPI) {
+  let messageRevision = 0;
+  pi.on("message_end", () => {
+    // Finalized messages can be replaced by subsequent message_end handlers.
+    messageRevision++;
+  });
+
   pi.on("session_start", (_event, ctx) => {
     if (ctx.mode !== "tui") return;
 
     ctx.ui.setFooter((tui, theme, footerData) => {
       const unsubscribe = footerData.onBranchChange(() => tui.requestRender());
+      let cachedHeader: ReturnType<typeof ctx.sessionManager.getHeader>;
+      let cachedLeaf: ReturnType<typeof ctx.sessionManager.getLeafEntry>;
+      let cachedRevision = -1;
+      let totals: UsageTotals;
+      let latestCacheHitRate: number | undefined;
+
+      const updateUsage = () => {
+        const header = ctx.sessionManager.getHeader();
+        const leaf = ctx.sessionManager.getLeafEntry();
+        if (header === cachedHeader && leaf === cachedLeaf && messageRevision === cachedRevision) return;
+
+        // Public session history is append-only. Appends/context edits move the
+        // leaf; identity also detects reloads and replacements with the same ID.
+        // Rebuild from raw history, not the active branch: abandoned work is billed.
+        cachedHeader = header;
+        cachedLeaf = leaf;
+        cachedRevision = messageRevision;
+        totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+        latestCacheHitRate = undefined;
+        for (const entry of ctx.sessionManager.getEntries()) {
+          if (entry.type === "message" && entry.message.role === "assistant") {
+            addUsage(totals, entry.message.usage);
+            const promptTokens =
+              entry.message.usage.input + entry.message.usage.cacheRead + entry.message.usage.cacheWrite;
+            latestCacheHitRate = promptTokens > 0 ? (entry.message.usage.cacheRead / promptTokens) * 100 : undefined;
+          } else if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.usage) {
+            addUsage(totals, entry.message.usage);
+          } else if (
+            (entry.type === "branch_summary" || entry.type === "compaction" || entry.type === "usage") &&
+            entry.usage
+          ) {
+            addUsage(totals, entry.usage);
+          }
+        }
+      };
 
       return {
         dispose: unsubscribe,
         invalidate() {},
         render(width: number): string[] {
-          const totals: UsageTotals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
-          let latestCacheHitRate: number | undefined;
-
-          for (const entry of ctx.sessionManager.getEntries()) {
-            if (entry.type === "message" && entry.message.role === "assistant") {
-              addUsage(totals, entry.message.usage);
-              const promptTokens =
-                entry.message.usage.input + entry.message.usage.cacheRead + entry.message.usage.cacheWrite;
-              latestCacheHitRate = promptTokens > 0 ? (entry.message.usage.cacheRead / promptTokens) * 100 : undefined;
-            } else if (entry.type === "message" && entry.message.role === "toolResult" && entry.message.usage) {
-              addUsage(totals, entry.message.usage);
-            } else if ((entry.type === "branch_summary" || entry.type === "compaction") && entry.usage) {
-              addUsage(totals, entry.usage);
-            }
-          }
+          updateUsage();
 
           const usageParts: string[] = [];
           const addDimUsage = (text: string) => usageParts.push(theme.fg("dim", text));
