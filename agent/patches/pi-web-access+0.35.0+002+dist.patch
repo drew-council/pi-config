@@ -1,0 +1,185 @@
+diff --git a/node_modules/pi-web-access/dist/index.js b/node_modules/pi-web-access/dist/index.js
+--- a/node_modules/pi-web-access/dist/index.js
++++ b/node_modules/pi-web-access/dist/index.js
+@@ -2355,7 +2355,7 @@
+     API_VERSION = "v1beta";
+     API_BASE = `${DEFAULT_API_HOST}/${API_VERSION}`;
+     CONFIG_PATH3 = getWebSearchConfigPath();
+-    DEFAULT_MODEL = "gemini-3.6-flash";
++    DEFAULT_MODEL = "gemini-3.8-flash";
+     cachedConfig3 = null;
+     responseCredentials = /* @__PURE__ */ new WeakMap();
+   }
+@@ -8065,7 +8065,7 @@
+ 
+ Format as markdown.`;
+     YOUTUBE_REGEX = /(?:(?:www\.|m\.)?youtube\.com\/(?:watch\?.*v=|shorts\/|live\/|embed\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+-    defaults = { enabled: true, preferredModel: "gemini-3.6-flash" };
++    defaults = { enabled: true, preferredModel: "gemini-3.8-flash" };
+     cachedConfig35 = null;
+   }
+ });
+@@ -8531,9 +8531,21 @@
+ import { existsSync as existsSync48, readFileSync as readFileSync50, readdirSync as readdirSync4, statSync as statSync3 } from "node:fs";
+ import { readFile as readFile2 } from "node:fs/promises";
+ import { resolve, extname as extname2, basename as basename4, join as join7, dirname as dirname2 } from "node:path";
++function videoErrorMessage(err) {
++  return err instanceof Error ? err.message : String(err);
++}
++function videoAddAttemptError(errors, label, err) {
++  const message = videoErrorMessage(err).replace(/\s+/g, " ").trim();
++  if (message)
++    errors.push(`${label}: ${message}`);
++}
++const VIDEO_MODEL_FALLBACKS = ["gemini-2.5-flash", "gemini-flash-latest"];
++function videoModelsToTry(preferred) {
++  const models = [preferred, ...VIDEO_MODEL_FALLBACKS];
++  return [...new Set(models.map((candidate) => candidate.trim()).filter(Boolean))];
++}
+ function shouldRethrow3(err) {
+-  const message = err instanceof Error ? err.message : String(err);
+-  return message.startsWith("Failed to parse ");
++  return videoErrorMessage(err).startsWith("Failed to parse ");
+ }
+ function normalizePreferredModel2(value, fallback) {
+   if (typeof value !== "string") return fallback;
+@@ -8632,7 +8644,8 @@
+     return { url: info.absolutePath, title: displayName, content: error, error };
+   }
+   const activityId = activityMonitor.logStart({ type: "fetch", url: `video:${displayName}` });
+-  const result = await tryVideoGeminiApi(info, effectivePrompt, effectiveModel, signal) ?? await tryVideoGeminiWeb(info, effectivePrompt, effectiveModel, signal);
++  const attemptErrors = [];
++  const result = await tryVideoGeminiApi(info, effectivePrompt, effectiveModel, signal, attemptErrors) ?? await tryVideoGeminiWeb(info, effectivePrompt, effectiveModel, signal, attemptErrors);
+   if (result) {
+     if (canAttachImages()) {
+       const thumbnail = await extractVideoFrame(info.absolutePath);
+@@ -8647,8 +8660,12 @@
+     activityMonitor.logComplete(activityId, 0);
+     return null;
+   }
+-  activityMonitor.logError(activityId, "all video extraction paths failed");
+-  return null;
++  const error = attemptErrors.length > 0 ? ["Could not analyze local video.", "", ...attemptErrors.map((message) => `- ${message}`)].join(`
++`) : `Video analysis requires Gemini access. Either:
++  1. Sign into gemini.google.com in Chrome (free, uses cookies)
++  2. Set GEMINI_API_KEY in ${CONFIG_PATH44}`;
++  activityMonitor.logError(activityId, error);
++  return { url: info.absolutePath, title: "", content: "", error };
+ }
+ function mapFfprobeError(err) {
+   const { code, stderr, message } = readExecError(err);
+@@ -8695,55 +8712,78 @@
+     return { error: mapFfprobeError(err) };
+   }
+ }
+-async function tryVideoGeminiWeb(info, prompt, model, signal) {
++async function tryVideoGeminiWeb(info, prompt, model, signal, attemptErrors = []) {
+   try {
+     const cookies = await isGeminiWebAvailable();
+-    if (!cookies) return null;
+-    if (signal?.aborted) return null;
+-    const text2 = await queryWithCookies(prompt, cookies, {
++    if (!cookies)
++      return null;
++    if (signal?.aborted)
++      return null;
++    const text = await queryWithCookies(prompt, cookies, {
+       files: [info.absolutePath],
+       ...model !== "gemini-3.6-flash" ? { model } : {},
+       signal,
+-      timeoutMs: 18e4
++      timeoutMs: 180000
+     });
+     return {
+       url: info.absolutePath,
+-      title: extractVideoTitle(text2, info.absolutePath),
+-      content: text2,
++      title: extractVideoTitle(text, info.absolutePath),
++      content: text,
+       error: null
+     };
+   } catch (err) {
+-    if (shouldRethrow3(err)) throw err;
++    if (shouldRethrow3(err))
++      throw err;
++    if (!signal?.aborted)
++      videoAddAttemptError(attemptErrors, "Gemini Web", err);
+     return null;
+   }
+ }
+-async function tryVideoGeminiApi(info, prompt, model, signal) {
++async function tryVideoGeminiApi(info, prompt, model, signal, attemptErrors = []) {
+   const apiKey = await getApiKey(signal);
+-  if (!apiKey) return null;
+-  if (signal?.aborted) return null;
++  if (!apiKey)
++    return null;
++  if (signal?.aborted)
++    return null;
+   let fileName = null;
+   try {
+     const uploaded = await uploadToFilesApi(info, apiKey, signal);
+     fileName = uploaded.name;
+-    await pollFileState(fileName, apiKey, signal, 12e4);
+-    const text2 = await queryGeminiApiWithVideo(prompt, uploaded.uri, {
+-      apiKey,
+-      model,
+-      mimeType: info.mimeType,
+-      signal,
+-      timeoutMs: 12e4
+-    });
+-    return {
+-      url: info.absolutePath,
+-      title: extractVideoTitle(text2, info.absolutePath),
+-      content: text2,
+-      error: null
+-    };
++    await pollFileState(fileName, apiKey, signal, 120000);
++    for (const candidate of videoModelsToTry(model)) {
++      if (signal?.aborted)
++        return null;
++      try {
++        const text = await queryGeminiApiWithVideo(prompt, uploaded.uri, {
++          apiKey,
++          model: candidate,
++          mimeType: info.mimeType,
++          signal,
++          timeoutMs: 120000
++        });
++        return {
++          url: info.absolutePath,
++          title: extractVideoTitle(text, info.absolutePath),
++          content: text,
++          error: null
++        };
++      } catch (err) {
++        if (shouldRethrow3(err))
++          throw err;
++        if (!signal?.aborted)
++          videoAddAttemptError(attemptErrors, `Gemini API (${candidate})`, err);
++      }
++    }
++    return null;
+   } catch (err) {
+-    if (shouldRethrow3(err)) throw err;
++    if (shouldRethrow3(err))
++      throw err;
++    if (!signal?.aborted)
++      videoAddAttemptError(attemptErrors, "Gemini API", err);
+     return null;
+   } finally {
+-    if (fileName) deleteGeminiFile(fileName, apiKey);
++    if (fileName)
++      deleteGeminiFile(fileName, apiKey);
+   }
+ }
+ async function uploadToFilesApi(info, apiKey, signal) {
+@@ -8837,7 +8877,7 @@
+     };
+     VIDEO_CONFIG_DEFAULTS = {
+       enabled: true,
+-      preferredModel: "gemini-3.6-flash",
++      preferredModel: "gemini-3.8-flash",
+       maxSizeMB: 50
+     };
+     cachedVideoConfig = null;

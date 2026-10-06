@@ -2,12 +2,12 @@
   "allowBrowserCookies": false,
   "video": {
     "enabled": true,
-    "preferredModel": "gemini-2.5-flash",
+    "preferredModel": "gemini-3.8-flash",
     "maxSizeMB": 50
   },
   "youtube": {
     "enabled": true,
-    "preferredModel": "gemini-2.5-flash"
+    "preferredModel": "gemini-3.8-flash"
   },
   "fetch": {
     "answerProvider": "google-vertex",

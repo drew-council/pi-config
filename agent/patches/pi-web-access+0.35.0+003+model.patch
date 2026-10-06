@@ -1,0 +1,37 @@
+diff --git a/node_modules/pi-web-access/gemini-api.ts b/node_modules/pi-web-access/gemini-api.ts
+--- a/node_modules/pi-web-access/gemini-api.ts
++++ b/node_modules/pi-web-access/gemini-api.ts
+@@ -14,7 +14,7 @@
+ const API_VERSION = "v1beta";
+ export const API_BASE = `${DEFAULT_API_HOST}/${API_VERSION}`;
+ const CONFIG_PATH = getWebSearchConfigPath();
+-export const DEFAULT_MODEL = "gemini-2.5-flash";
++export const DEFAULT_MODEL = "gemini-3.8-flash";
+ 
+ interface GeminiApiConfig {
+ 	geminiApiKey?: unknown;
+diff --git a/node_modules/pi-web-access/video-extract.ts b/node_modules/pi-web-access/video-extract.ts
+--- a/node_modules/pi-web-access/video-extract.ts
++++ b/node_modules/pi-web-access/video-extract.ts
+@@ -79,8 +79,7 @@
+ 
+ const VIDEO_CONFIG_DEFAULTS: VideoConfig = {
+ 	enabled: true,
+-	// Gemini 3.6 Flash can be capacity-limited; 2.5 Flash is the stable video path.
+-	preferredModel: "gemini-2.5-flash",
++	preferredModel: "gemini-3.8-flash",
+ 	maxSizeMB: 50,
+ };
+ 
+diff --git a/node_modules/pi-web-access/youtube-extract.ts b/node_modules/pi-web-access/youtube-extract.ts
+--- a/node_modules/pi-web-access/youtube-extract.ts
++++ b/node_modules/pi-web-access/youtube-extract.ts
+@@ -49,7 +49,7 @@
+ 	return typeof value === "boolean" ? value : fallback;
+ }
+ 
+-const defaults: YouTubeConfig = { enabled: true, preferredModel: "gemini-2.5-flash" };
++const defaults: YouTubeConfig = { enabled: true, preferredModel: "gemini-3.8-flash" };
+ let cachedConfig: YouTubeConfig | null = null;
+ 
+ function loadYouTubeConfig(): YouTubeConfig {
