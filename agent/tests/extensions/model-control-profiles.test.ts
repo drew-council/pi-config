@@ -3,13 +3,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { installModelPolicy } from "../../extensions/model-control/policy.js";
 import type { ModelEffortPreference } from "../../extensions/model-control/preferences.js";
 import {
   _test,
   applyProfileDefault,
   currentPair,
   ensureProfilePair,
+  loginSubscription,
   pairIsAvailable,
   promptWithSignal,
   runProfileSwitchTransaction,
@@ -352,4 +354,65 @@ describe("serial catalog refresh", () => {
     await runtime.refresh({ label: "after-failure", gate: ready });
     expect(runtime.finished).toEqual(["after-failure"]);
   });
+});
+
+test("subscription login forwards OAuth and Pi's device ID through the installed profile policy", async () => {
+  const calls: Parameters<ModelRuntime["login"]>[] = [];
+  const runtime = {
+    login: async (...args: Parameters<ModelRuntime["login"]>) => {
+      calls.push(args);
+      return { type: "oauth" as const, access: "fixture", refresh: "fixture", expires: 0 };
+    },
+  };
+  let profile: "personal" | "work" = "personal";
+  installModelPolicy(runtime as Parameters<typeof installModelPolicy>[0], () => profile);
+  const interaction = { signal: AbortSignal.abort(), prompt: async () => "", notify: () => {} };
+  const getDeviceId = () => "fixture-device";
+  for (const provider of ["openai", "openai-codex"] as const) {
+    await loginSubscription(runtime, provider, interaction, getDeviceId);
+  }
+  expect(calls[0]).toEqual(["openai", "oauth", interaction, { getDeviceId }]);
+  expect(calls[1]).toEqual(["openai-codex", "oauth", interaction, undefined]);
+  expect(calls[0][3]?.getDeviceId?.()).toBe("fixture-device");
+  profile = "work";
+  await expect(loginSubscription(runtime, "openai", interaction, getDeviceId)).rejects.toThrow("/profile");
+  expect(calls).toHaveLength(2);
+});
+
+test("new subscription defaults are additive and legacy pairs remain selected", async () => {
+  const chatgpt = model("openai", "gpt-6.1-sol");
+  for (const selected of [codex, chatgpt]) {
+    const ctx = modelContext([codex, chatgpt, claude], selected, "medium");
+    const pair = { provider: selected.provider, model: selected.id, thinking: "medium" as const };
+    expect(
+      await ensureProfilePair(
+        {
+          setModel: async () => {
+            throw new Error("must preserve");
+          },
+          setThinkingLevel: () => {
+            throw new Error("must preserve");
+          },
+        },
+        ctx,
+        "personal",
+        pair,
+      ),
+    ).toBeUndefined();
+    const result = await applyProfileDefault(
+      {
+        setModel: async (next) => {
+          ctx.model = next;
+          return true;
+        },
+        setThinkingLevel: (level) => {
+          ctx.thinkingLevel = level;
+        },
+      },
+      ctx,
+      "personal",
+      pair,
+    );
+    expect(result).toEqual({ pair, usedFallback: false });
+  }
 });

@@ -27,6 +27,7 @@ const BAR_WIDTH = 24;
 type ProviderResult<T> = { status: "ok"; data: T } | { status: "error"; message: string };
 
 export interface Snapshot {
+  chatgpt?: ProviderResult<never> | null;
   codex: ProviderResult<CodexUsageData> | null;
   claude: ProviderResult<ClaudeUsageData> | null;
   copilot: ProviderResult<CopilotUsageData> | null;
@@ -53,12 +54,34 @@ async function readJson(path: string): Promise<unknown> {
 function codexCredentialsFrom(auth: unknown, source: string): CodexCredentials | null {
   const providers = auth as Record<string, Record<string, unknown>> | null;
   const codex = providers?.["openai-codex"];
-  if (!codex || typeof codex.access !== "string" || !codex.access) return null;
+  if (!codex || codex.type !== "oauth" || typeof codex.access !== "string" || !codex.access) return null;
   return {
     access: codex.access,
     accountId: typeof codex.accountId === "string" ? codex.accountId : null,
     expiresAt: typeof codex.expires === "number" ? codex.expires : null,
     source,
+  };
+}
+
+function chatgptUsageFrom(auth: unknown): ProviderResult<never> | null {
+  const credential = (auth as Record<string, Record<string, unknown>> | null)?.openai;
+  if (!credential || credential.type !== "oauth") return null;
+  const valid =
+    typeof credential.access === "string" &&
+    Boolean(credential.access.trim()) &&
+    typeof credential.refresh === "string" &&
+    Boolean(credential.refresh.trim()) &&
+    typeof credential.expires === "number" &&
+    Number.isFinite(credential.expires) &&
+    typeof credential.clientId === "string" &&
+    Boolean(credential.clientId.trim()) &&
+    Array.isArray(credential.scopes) &&
+    credential.scopes.includes("chatgpt.tokens.use.direct");
+  return {
+    status: "error",
+    message: valid
+      ? "Usage unsupported for direct ChatGPT grant (openai); legacy Codex usage below does not measure this grant."
+      : "Invalid saved ChatGPT subscription login; use /log-me-in openai to reconnect.",
   };
 }
 
@@ -91,10 +114,16 @@ async function fetchJson(
   return (await response.json()) as unknown;
 }
 
-async function fetchCodex(signal: AbortSignal | undefined): Promise<ProviderResult<CodexUsageData>> {
-  const credentials = await readCodexCredentials();
+async function fetchCodex(
+  signal: AbortSignal | undefined,
+  agentDir = AGENT_DIR,
+): Promise<ProviderResult<CodexUsageData>> {
+  const credentials = await readCodexCredentials(agentDir);
   if (!credentials) {
-    return { status: "error", message: "not logged in (run /login for openai-codex)" };
+    return {
+      status: "error",
+      message: "No legacy Codex OAuth login (use /log-me-in openai-codex); direct ChatGPT usage is unsupported.",
+    };
   }
   if (credentials.expiresAt !== null && credentials.expiresAt <= Date.now()) {
     return {
@@ -220,7 +249,8 @@ async function loadSnapshot(signal: AbortSignal | undefined): Promise<Snapshot> 
     fetchCopilot(signal),
     fetchOpenRouter(signal),
   ]);
-  return { codex, claude, copilot, openrouter, fetchedAt: Date.now() };
+  const chatgpt = chatgptUsageFrom(await readJson(profileAuthPath(AGENT_DIR, "personal")));
+  return { chatgpt, codex, claude, copilot, openrouter, fetchedAt: Date.now() };
 }
 
 function remainingColor(remainingPercent: number): string {
@@ -256,9 +286,12 @@ function snapshotLines(
   const dim = (text: string) => theme.fg("dim", text);
   const muted = (text: string) => theme.fg("muted", text);
 
+  if (snapshot.chatgpt?.status === "error") {
+    lines.push(theme.bold("ChatGPT subscription (openai)"), `  ${dim(snapshot.chatgpt.message)}`, "");
+  }
   const codex = snapshot.codex;
   if (codex) {
-    lines.push(theme.bold("OpenAI Codex"));
+    lines.push(theme.bold("OpenAI Codex · legacy usage"));
     if (codex.status === "error") {
       lines.push(`  ${dim("unavailable:")} ${theme.fg("error", codex.message)}`);
     } else {
@@ -386,6 +419,7 @@ export function profileSnapshotLines(
 ): string[] {
   const scoped = {
     ...snapshot,
+    chatgpt: providerAllowed(profile, "openai") ? snapshot.chatgpt : null,
     codex: providerAllowed(profile, "openai-codex") ? snapshot.codex : null,
     claude: providerAllowed(profile, "claude-bridge") ? snapshot.claude : null,
     copilot: providerAllowed(profile, "github-copilot") ? snapshot.copilot : null,
@@ -419,7 +453,7 @@ function plainSnapshotText(snapshot: Snapshot): string {
   return lines.join("\n").replace(/█|░/g, (c) => (c === "█" ? "#" : "-"));
 }
 
-export const _test = { readCodexCredentials, readCopilotCredentials };
+export const _test = { readCodexCredentials, readCopilotCredentials, chatgptUsageFrom, fetchCodex };
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("usage", {

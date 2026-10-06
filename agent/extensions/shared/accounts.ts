@@ -15,6 +15,7 @@ export const ACCOUNTS = [
   { id: "claude-bridge", profile: "work", label: "Claude Code · external login" },
   { id: "openai-codex", profile: "personal", label: "OpenAI Codex · subscription" },
   { id: "openrouter", profile: "personal", label: "OpenRouter · API key" },
+  { id: "openai", profile: "personal", label: "OpenAI · ChatGPT subscription" },
 ] as const;
 export type Account = (typeof ACCOUNTS)[number];
 const isShared = (account: Account): boolean => "shared" in account && account.shared;

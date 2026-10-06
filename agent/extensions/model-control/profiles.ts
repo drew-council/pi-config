@@ -15,6 +15,7 @@ import {
   type ModelRegistry,
   type ModelRuntime,
   parseArgs,
+  SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import {
   ACCOUNTS,
@@ -103,6 +104,15 @@ export async function promptWithSignal(
   }
 }
 
+export async function loginSubscription(
+  runtime: Pick<ModelRuntime, "login">,
+  provider: string,
+  interaction: AuthInteraction,
+  getDeviceId: () => string,
+): Promise<void> {
+  await runtime.login(provider, "oauth", interaction, provider === "openai" ? { getDeviceId } : undefined);
+}
+
 async function oauthLogin(
   runtime: ModelRuntime,
   ctx: ExtensionContext,
@@ -131,7 +141,9 @@ async function oauthLogin(
     };
     const login = async () => {
       if (account.id !== "github-copilot") {
-        await runtime.login(account.id, "oauth", interaction);
+        await loginSubscription(runtime, account.id, interaction, () =>
+          SettingsManager.create(ctx.cwd, getAgentDir()).getOrCreateDeviceId(),
+        );
         return;
       }
       const oauth = runtime.getProvider(account.id)?.auth.oauth;
@@ -557,7 +569,7 @@ export default function modelControl(pi: ExtensionAPI) {
       if (action !== "Check saved login") {
         const ok = await oauthLogin(runtime, ctx, account, shutdown.signal);
         ctx.ui.notify(
-          ok ? "Codex login saved." : "Login cancelled or failed. Try again when ready.",
+          ok ? `${account.label} login saved.` : "Login cancelled or failed. Try again when ready.",
           ok ? "info" : "warning",
         );
         return;
@@ -575,7 +587,7 @@ export default function modelControl(pi: ExtensionAPI) {
   };
 
   pi.registerCommand("log-me-in", {
-    description: "Account login menu: work (Copilot/Vertex AI/Claude) and personal (Codex/OpenRouter)",
+    description: "Account login menu: work (Copilot/Vertex AI/Claude) and personal (ChatGPT/Codex/OpenRouter)",
     getArgumentCompletions: (prefix) =>
       ACCOUNTS.filter((a) => a.id.startsWith(prefix)).map((a) => ({
         value: a.id,

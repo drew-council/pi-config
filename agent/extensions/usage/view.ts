@@ -110,8 +110,9 @@ export function profileView(snapshot: Snapshot, theme: UsageTheme, profile: Prof
     note(box, "Usage reporting not supported");
     column.addChild(box);
   }
+  if (providerAllowed(profile, "openai")) add("ChatGPT subscription (openai)", snapshot.chatgpt ?? null, () => {});
   if (providerAllowed(profile, "openai-codex"))
-    add("OpenAI Codex", snapshot.codex, (box) => {
+    add("OpenAI Codex · legacy usage", snapshot.codex, (box) => {
       if (snapshot.codex?.status !== "ok") return;
       const data = snapshot.codex.data;
       for (const win of data.windows) {

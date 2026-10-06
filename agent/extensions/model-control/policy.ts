@@ -121,9 +121,10 @@ export function installModelPolicy(
     }
     return auth.call(this, modelOrProvider as AnyModel, options);
   };
-  target.login = async function (provider, type, interaction) {
+  target.login = async function (...args) {
+    const [provider] = args;
     if (!providerVisible(provider)) throw new Error(`Use /profile before logging into ${provider}.`);
-    return login.call(this, provider, type, interaction);
+    return login.apply(this, args);
   };
   patched[policyMarker] = state;
 }

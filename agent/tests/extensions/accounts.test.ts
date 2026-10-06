@@ -296,6 +296,7 @@ describe("profile isolation using Pi's real credential store", () => {
       "google-vertex": { type: "api_key", key: "work-key" },
       "github-copilot": oauth,
       "openai-codex": oauth,
+      openai: { ...oauth, clientId: "fixture-client", scopes: ["chatgpt.tokens.use.direct"] },
     });
     const runtime = await runtimeFor(agent, "work");
     await runtime.setRuntimeApiKey("openrouter", "ambient-personal-key");
@@ -307,6 +308,12 @@ describe("profile isolation using Pi's real credential store", () => {
     expect(work.some((m) => m.provider === "github-copilot" && m.id.startsWith("gpt-"))).toBeTrue();
     expect(work.some((m) => m.provider === "openai-codex" || m.provider === "openrouter")).toBeFalse();
     expect(work.some((m) => m.id === "gpt-4o")).toBeFalse();
+    expect(await runtime.getAvailable("openai")).toEqual([]);
+    expect(await runtime.checkAuth("openai")).toBeUndefined();
+    await expect(runtime.getAuth("openai", { apiKey: "bypass" })).rejects.toThrow("disabled");
+    await expect(runtime.login("openai", "oauth", { prompt: async () => "", notify: () => {} })).rejects.toThrow(
+      "/profile",
+    );
     expect(await runtime.getAvailable("openai-codex")).toEqual([]);
     expect(await runtime.checkAuth("openai-codex")).toBeUndefined();
     expect(runtime.hasConfiguredAuth("openrouter")).toBeFalse();
@@ -326,10 +333,14 @@ describe("profile isolation using Pi's real credential store", () => {
     installModelPolicy(runtime, () => profile); // hot reload must not stack a second restrictive closure
     const personal = runtime.getAvailableSnapshot();
     expect(personal.some((m) => m.provider === "openai-codex")).toBeTrue();
-    expect(personal.every((m) => ["openai-codex", "openrouter", "google-vertex"].includes(m.provider))).toBeTrue();
+    expect(personal.some((m) => m.provider === "openai")).toBeTrue();
+    expect(
+      personal.every((m) => ["openai", "openai-codex", "openrouter", "google-vertex"].includes(m.provider)),
+    ).toBeTrue();
     expect(personal.some((m) => m.provider === "google-vertex")).toBeTrue();
     await expect(runtime.getAuth("github-copilot")).rejects.toThrow("disabled");
     profile = "work";
+    expect(runtime.getAvailableSnapshot().some((m) => m.provider === "openai")).toBeFalse();
     expect(runtime.getAvailableSnapshot().some((m) => m.provider === "google-vertex")).toBeTrue();
   });
 
@@ -339,6 +350,7 @@ describe("profile isolation using Pi's real credential store", () => {
     json(profileAuthPath(agent, "work"), {
       "google-vertex": { type: "api_key", key: "work-key" },
       "openai-codex": oauth,
+      openai: { ...oauth, clientId: "fixture-client", scopes: ["chatgpt.tokens.use.direct"] },
     });
     const runtime = await runtimeFor(agent, "work");
     const codex = runtime.getModels("openai-codex")[0];
@@ -390,6 +402,13 @@ describe("profile isolation using Pi's real credential store", () => {
   test("fallback never selects a provider from the other account, including empty profiles", () => {
     const codex = { provider: "openai-codex", id: "gpt-test" } as Model<Api>;
     const gemini = { provider: "google-vertex", id: "gemini-test" } as Model<Api>;
+    const chatgpt = { provider: "openai", id: "gpt-test" } as Model<Api>;
+    const router = { provider: "openrouter", id: "router-test" } as Model<Api>;
+    expect(chooseProfileModel([chatgpt], "work")).toBeUndefined();
+    expect(chooseProfileModel([chatgpt], "personal")).toBe(chatgpt);
+    expect(chooseProfileModel([chatgpt, router, codex], "personal")).toBe(codex);
+    expect(chooseProfileModel([chatgpt, router], "personal")).toBe(router);
+    expect(chooseProfileModel([], "personal")).toBeUndefined();
     expect(chooseProfileModel([codex, gemini], "work", codex)).toBe(gemini);
     expect(chooseProfileModel([codex], "work")).toBeUndefined();
     expect(chooseProfileModel([gemini, codex], "personal", codex)).toBe(codex);
