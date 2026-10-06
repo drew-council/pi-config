@@ -1,6 +1,11 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { assertComposioToolAllowed, type ComposioPolicy, isComposioToolAllowed } from "./config.js";
+import {
+  assertComposioToolAllowed,
+  type ComposioPolicy,
+  isComposioToolAllowed,
+  isComposioToolkitAllowed,
+} from "./config.js";
 
 export interface ComposioConnection {
   policy: ComposioPolicy;
@@ -58,7 +63,7 @@ export function filterComposioSearch(value: unknown, policy: ComposioPolicy): un
   }
   if (Array.isArray(data.toolkit_connection_statuses)) {
     filtered.toolkit_connection_statuses = data.toolkit_connection_statuses.filter((item) =>
-      policy.toolkits.includes(String(object(item).toolkit)),
+      isComposioToolkitAllowed(policy, String(object(item).toolkit)),
     );
   }
   return { ...payload, data: filtered };
@@ -156,17 +161,17 @@ export function createComposioConnection(
   const withSession = (args: Record<string, unknown>) => ({ ...args, ...(sessionId ? { session_id: sessionId } : {}) });
   const checkToolkits = (toolkits: string[]) => {
     for (const toolkit of toolkits) {
-      if (!policy.toolkits.includes(toolkit)) throw new Error(`Composio policy does not allow toolkit ${toolkit}.`);
+      if (!isComposioToolkitAllowed(policy, toolkit)) {
+        throw new Error(`Composio policy does not allow toolkit ${toolkit}.`);
+      }
     }
   };
 
   return {
     policy,
     async search(query, toolkits, requestSignal) {
-      const allowed = toolkits?.length ? toolkits : policy.toolkits;
-      checkToolkits(allowed);
-      if (!allowed.length) throw new Error("No Composio toolkits are enabled in composio.json.");
-      const hint = ` Use only these toolkits: ${allowed.join(", ")}.`;
+      checkToolkits(toolkits ?? []);
+      const hint = toolkits?.length ? ` Use only these toolkits: ${toolkits.join(", ")}.` : "";
       const result = await call(
         "COMPOSIO_SEARCH_TOOLS",
         {
@@ -175,7 +180,7 @@ export function createComposioConnection(
         },
         requestSignal,
       );
-      return filterComposioSearch(result, { ...policy, toolkits: allowed });
+      return filterComposioSearch(result, policy);
     },
     async execute(slug, args, account, requestSignal) {
       if (slug === "COMPOSIO_GET_TOOL_SCHEMAS") {

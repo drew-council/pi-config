@@ -17,7 +17,7 @@ const CODEMODE_GUIDANCE =
 const COMPOSIO_NAMESPACE = {
   name: "composio",
   description: "Search schemas and use the user's connected apps through the policy-restricted Composio connector.",
-  instructions: `${createPiComposioSystemPrompt()}\n${CODEMODE_GUIDANCE}\nOnly the user can enable this connector with /composio. Local toolkit/action policy applies to every call, including schema lookups. COMPOSIO_GET_TOOL_SCHEMAS is the only executable meta-tool; remote Bash, workbench, and raw proxy access are unavailable. Connection management lists accounts by default; reinitiate_all=true starts OAuth.`,
+  instructions: `${createPiComposioSystemPrompt()}\n${CODEMODE_GUIDANCE}\nOnly the user can enable this connector with /composio. Every connected app is available except toolkits and tools disabled in composio.json; that check applies to every call, including schema lookups. COMPOSIO_GET_TOOL_SCHEMAS is the only executable meta-tool; remote Bash, workbench, and raw proxy access are unavailable. Connection management lists accounts by default; reinitiate_all=true starts OAuth.`,
 };
 const COMPOSIO_OUTPUT_SCHEMA = Type.Object(
   {
@@ -31,6 +31,10 @@ const COMPOSIO_OUTPUT_SCHEMA = Type.Object(
 export interface ComposioConfig {
   apiKey: string;
   policy: ComposioPolicy;
+}
+
+function describePolicy(policy: ComposioPolicy): string {
+  return policy.disable.length ? `all apps except ${policy.disable.join(", ")}` : "all apps";
 }
 
 interface ComposioExtensionOptions {
@@ -141,7 +145,7 @@ export function registerComposio(pi: ExtensionAPI, options: ComposioExtensionOpt
     expose(true);
     updateActiveTools(pi, { add: ["codemode"], remove: TOOL_NAMES });
     ctx.ui.setStatus("composio", ctx.ui.theme.fg("success", "Composio on"));
-    ctx.ui.notify(`Composio on (${config.policy.toolkits.join(", ")}).`, "info");
+    ctx.ui.notify(`Composio on (${describePolicy(config.policy)}).`, "info");
   };
 
   const disable = (ctx: ExtensionContext) => {
@@ -165,7 +169,7 @@ export function registerComposio(pi: ExtensionAPI, options: ComposioExtensionOpt
   pi.on("before_agent_start", (event) => {
     if (!enabled) return;
     return {
-      systemPrompt: `${event.systemPrompt}\n\n${createPiComposioSystemPrompt()}\nAllowed Composio toolkits: ${enabled.config.policy.toolkits.join(", ")}.\nFor missing schemas, use composio_execute_tool with toolSlug COMPOSIO_GET_TOOL_SCHEMAS and arguments {tool_slugs: [exact tool slugs]}.\nConnection management lists accounts by default; reinitiate_all=true starts an OAuth connection.\n${CODEMODE_GUIDANCE}`,
+      systemPrompt: `${event.systemPrompt}\n\n${createPiComposioSystemPrompt()}\nAvailable Composio apps: ${describePolicy(enabled.config.policy)}.\nFor missing schemas, use composio_execute_tool with toolSlug COMPOSIO_GET_TOOL_SCHEMAS and arguments {tool_slugs: [exact tool slugs]}.\nConnection management lists accounts by default; reinitiate_all=true starts an OAuth connection.\n${CODEMODE_GUIDANCE}`,
     };
   });
   pi.registerCommand("composio", {
@@ -185,7 +189,7 @@ export function registerComposio(pi: ExtensionAPI, options: ComposioExtensionOpt
         case "status":
           ctx.ui.notify(
             enabled
-              ? `Composio is on (${enabled.config.policy.toolkits.join(", ")}).`
+              ? `Composio is on (${describePolicy(enabled.config.policy)}).`
               : "Composio is off. Run /composio to enable it.",
             "info",
           );

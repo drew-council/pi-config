@@ -28,7 +28,7 @@ import {
 import { isComposioToolAllowed, readComposioKey, readComposioPolicy } from "../../extensions/composio/config.js";
 import { type ComposioConfig, registerComposio } from "../../extensions/composio/index.js";
 
-const POLICY = { toolkits: ["gmail"], tools: {} };
+const POLICY = { disable: [] };
 
 function fakeConnection() {
   const calls: Array<{ method: string; args: unknown[] }> = [];
@@ -131,7 +131,7 @@ test("toggling is local; the first call connects once and later or concurrent ca
   assert.equal(h.statuses.at(-1), "Composio on");
   assert.match(
     (h.emit("before_agent_start", { systemPrompt: "base" }) as { systemPrompt: string }).systemPrompt,
-    /^base\n[\s\S]*Allowed Composio toolkits: gmail\./,
+    /^base\n[\s\S]*Available Composio apps: all apps\./,
   );
   await Promise.all([
     h.runTool("composio_search_tools", { query: "inbox" }),
@@ -386,6 +386,7 @@ test("consumer execution preserves the search session and sends one app call wit
   await connection.search("inbox", undefined, signal);
   await connection.execute("GMAIL_FETCH_EMAILS", { label_ids: ["INBOX"], max_results: 3 }, "personal", signal);
   assert.deepEqual(calls[0].args.session, { generate_id: true });
+  assert.deepEqual(calls[0].args.queries, [{ use_case: "inbox" }]);
   assert.deepEqual(calls[1], {
     name: "COMPOSIO_MULTI_EXECUTE_TOOL",
     args: {
@@ -400,8 +401,8 @@ test("consumer execution preserves the search session and sends one app call wit
   });
 });
 
-test("toolkit/action policy rejects forbidden app tools, schema lookups, and meta-tool bypasses before a network call", async () => {
-  const policy = { toolkits: ["gmail"], tools: { gmail: { enable: ["GMAIL_FETCH_EMAILS"] } } };
+test("the disable list and meta-tool block reject calls before a network call; everything else is allowed", async () => {
+  const policy = { disable: ["github", "GMAIL_SEND_EMAIL"] };
   let calls = 0;
   const connection = createComposioConnection(
     policy,
@@ -421,19 +422,12 @@ test("toolkit/action policy rejects forbidden app tools, schema lookups, and met
   }
   await assert.rejects(connection.execute("COMPOSIO_GET_TOOL_SCHEMAS", { tool_slugs: ["GMAIL_SEND_EMAIL"] }), /policy/);
   await assert.rejects(connection.search("issues", ["github"]), /policy/);
-  await assert.rejects(connection.manageConnections(["github"], true), /policy/);
+  await assert.rejects(connection.manageConnections(["GitHub"], true), /policy/);
   assert.equal(calls, 0);
-  assert.equal(
-    isComposioToolAllowed({ toolkits: ["gmail"], tools: { gmail: { enable: [] } } }, "GMAIL_FETCH_EMAILS"),
-    false,
-  );
-  assert.equal(
-    isComposioToolAllowed(
-      { toolkits: ["gmail"], tools: { gmail: { enable: ["GMAIL_FETCH_EMAILS"], disable: ["GMAIL_FETCH_EMAILS"] } } },
-      "GMAIL_FETCH_EMAILS",
-    ),
-    false,
-  );
+  for (const slug of ["GMAIL_FETCH_EMAILS", "GMAIL_SEND_EMAIL_DRAFT", "SLACK_SEND_MESSAGE", "COMPOSIO_SEARCH_WEB"]) {
+    assert.equal(isComposioToolAllowed(policy, slug), true, slug);
+  }
+  assert.equal(isComposioToolAllowed({ disable: [] }, "COMPOSIO_REMOTE_WORKBENCH"), false);
 });
 
 test("gateway rejections are resent with backoff, other statuses are returned as is", async () => {
@@ -521,7 +515,7 @@ for (const mode of ["on", "only"] as const) {
     let session: AgentSession | undefined;
     const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
     const connection = createComposioConnection(
-      { toolkits: ["gmail"], tools: { gmail: { enable: ["GMAIL_FETCH_EMAILS"] } } },
+      { disable: ["GMAIL_SEND_EMAIL"] },
       async (name, args) => {
         calls.push({ name, args });
         if (name === "COMPOSIO_SEARCH_TOOLS") {
@@ -655,10 +649,14 @@ test("credential and policy readers reject unresolved secrets, malformed JSON, a
       () => readComposioKey(path),
       (error: Error) => !error.message.includes("SECRET_MUST_NOT_LEAK"),
     );
-    await writeFile(path, JSON.stringify({ toolkits: ["gmail"], tool: { gmail: [] } }));
-    assert.throws(() => readComposioPolicy(path), /Unknown.*tool/);
-    await writeFile(path, JSON.stringify(POLICY));
-    assert.deepEqual(readComposioPolicy(path), POLICY);
+    await writeFile(path, JSON.stringify({ toolkits: ["gmail"], tools: {} }));
+    assert.throws(() => readComposioPolicy(path), /Unknown composio.json setting: toolkits/);
+    await writeFile(path, JSON.stringify({ disable: ["Gmail"] }));
+    assert.throws(() => readComposioPolicy(path), /disable must list/);
+    await writeFile(path, JSON.stringify({ disable: ["github", "GMAIL_SEND_EMAIL", "github"] }));
+    assert.deepEqual(readComposioPolicy(path), { disable: ["github", "GMAIL_SEND_EMAIL"] });
+    await writeFile(path, "{}");
+    assert.deepEqual(readComposioPolicy(path), { disable: [] });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

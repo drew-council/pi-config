@@ -1,4 +1,3 @@
 {
-  "toolkits": ["gmail", "discord", "googlecalendar"],
-  "tools": {}
+  "disable": []
 }

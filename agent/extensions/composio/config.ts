@@ -1,9 +1,26 @@
 import { readJson } from "../shared/accounts.js";
 
 export interface ComposioPolicy {
-  toolkits: string[];
-  tools: Record<string, { enable?: string[]; disable?: string[] }>;
+  /** Blocked toolkit slugs (`github`) and tool slugs (`GMAIL_DELETE_MESSAGE`); everything else is allowed. */
+  disable: string[];
 }
+
+const TOOLKIT_SLUG = /^[a-z][a-z0-9_]*$/;
+const TOOL_SLUG = /^[A-Z][A-Z0-9_]*$/;
+/** Connect's own meta-tools. They run through the dedicated helpers or not at all, never as app actions. */
+const META_TOOLS = new Set([
+  "COMPOSIO_GET_TOOL_SCHEMAS",
+  "COMPOSIO_MANAGE_CONNECTIONS",
+  "COMPOSIO_MANAGE_SKILL",
+  "COMPOSIO_MULTI_EXECUTE_TOOL",
+  "COMPOSIO_REMOTE_BASH_TOOL",
+  "COMPOSIO_REMOTE_WORKBENCH",
+  "COMPOSIO_SEARCH_SKILLS",
+  "COMPOSIO_SEARCH_TOOLS",
+  "COMPOSIO_SUBMIT_FEEDBACK",
+  "COMPOSIO_USE_SKILL",
+  "COMPOSIO_WAIT_FOR_CONNECTIONS",
+]);
 
 export function readComposioKey(path: string): string {
   const secrets = readJson(path);
@@ -19,42 +36,28 @@ export function readComposioKey(path: string): string {
 
 export function readComposioPolicy(path: string): ComposioPolicy {
   const value = readJson(path);
-  const validList = (list: unknown, pattern: RegExp): list is string[] =>
-    Array.isArray(list) && list.every((item) => typeof item === "string" && pattern.test(item));
-  if (!validList(value.toolkits, /^[a-z][a-z0-9_]*$/)) {
-    throw new Error("composio.json must contain a toolkits array of lowercase toolkit slugs.");
-  }
-  const tools = value.tools ?? {};
-  if (!tools || typeof tools !== "object" || Array.isArray(tools)) {
-    throw new Error("composio.json tools must be an object keyed by toolkit slug.");
-  }
-  for (const [toolkit, rule] of Object.entries(tools)) {
-    if (!value.toolkits.includes(toolkit) || !rule || typeof rule !== "object" || Array.isArray(rule)) {
-      throw new Error(`Invalid Composio tool rule for ${toolkit}.`);
-    }
-    for (const [mode, list] of Object.entries(rule)) {
-      if (
-        !["enable", "disable"].includes(mode) ||
-        !validList(list, /^[A-Z][A-Z0-9_]*$/) ||
-        !list.every((slug) => slug.startsWith(`${toolkit.toUpperCase()}_`))
-      ) {
-        throw new Error(
-          `Invalid Composio ${toolkit} tool rule; use enable/disable arrays of that toolkit's tool slugs.`,
-        );
-      }
-    }
-  }
   for (const key of Object.keys(value)) {
-    if (!["toolkits", "tools"].includes(key)) throw new Error(`Unknown composio.json setting: ${key}.`);
+    if (key !== "disable") throw new Error(`Unknown composio.json setting: ${key}. Only a disable list is supported.`);
   }
-  return { toolkits: [...new Set(value.toolkits)], tools: tools as ComposioPolicy["tools"] };
+  const disable = value.disable ?? [];
+  if (
+    !Array.isArray(disable) ||
+    !disable.every((entry) => typeof entry === "string" && (TOOLKIT_SLUG.test(entry) || TOOL_SLUG.test(entry)))
+  ) {
+    throw new Error("composio.json disable must list toolkit slugs (github) or tool slugs (GMAIL_DELETE_MESSAGE).");
+  }
+  return { disable: [...new Set(disable as string[])] };
+}
+
+export function isComposioToolkitAllowed(policy: ComposioPolicy, toolkit: string): boolean {
+  return !policy.disable.includes(toolkit.toLowerCase());
 }
 
 export function isComposioToolAllowed(policy: ComposioPolicy, slug: string): boolean {
-  const toolkit = policy.toolkits.find((name) => slug.startsWith(`${name.toUpperCase()}_`));
-  if (!toolkit) return false;
-  const rule = policy.tools[toolkit];
-  return (!rule?.enable || rule.enable.includes(slug)) && !rule?.disable?.includes(slug);
+  if (META_TOOLS.has(slug)) return false;
+  return !policy.disable.some(
+    (entry) => entry === slug || (TOOLKIT_SLUG.test(entry) && slug.startsWith(`${entry.toUpperCase()}_`)),
+  );
 }
 
 export function assertComposioToolAllowed(policy: ComposioPolicy, slug: string): void {

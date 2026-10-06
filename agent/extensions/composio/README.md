@@ -52,38 +52,31 @@ an optional Pi peer below 1.0, but its `defineTool` interface works with Pi 1.0.
 
 ## Apps and tool permissions
 
-Edit `agent/composio.json`, then run `/composio off` and `/composio` to load changes. Initially
-only Gmail is allowed, including reading, drafting, sending, and label actions.
-An omitted `enable` list permits all actions in that toolkit; an empty `enable`
-list permits none. `disable` takes precedence.
-
-For example, to allow selected Gmail actions and add Calendar and GitHub:
+Every app connected in the Composio dashboard is available. `agent/composio.json`
+holds a `disable` list, empty by default; edit it, then run `/composio off` and
+`/composio` to load changes. Each entry is either a lowercase toolkit slug, which
+blocks the whole app, or an exact uppercase tool slug, which blocks one action:
 
 ```json
 {
-  "toolkits": ["gmail", "googlecalendar", "github"],
-  "tools": {
-    "gmail": {
-      "enable": ["GMAIL_FETCH_EMAILS", "GMAIL_CREATE_EMAIL_DRAFT", "GMAIL_SEND_EMAIL"]
-    }
-  }
+  "disable": ["github", "GMAIL_DELETE_MESSAGE"]
 }
 ```
 
-Use discovered exact tool slugs when adding action rules. Connect additional apps
-in the Composio dashboard before using them. Apps with no action rule allow all
-their actions.
+Disabled tools are removed from search results, and disabled toolkits from
+connection listings. Use discovered exact tool slugs for action entries.
 
 These are local extension checks on every execution and schema lookup. They do
 not narrow the consumer key's server-side permissions or change OAuth scopes.
-Remote Bash/workbench, raw proxy, and arbitrary meta-tool execution are excluded.
+Connect's own meta-tools (remote Bash/workbench, multi-execute, skills, feedback)
+can never be executed as actions, whatever the list says.
 
 ## Tools
 
 - `composio_search_tools`: search and retrieve relevant app tool schemas.
 - `composio_execute_tool`: execute one exact app tool. Missing schemas can be
   fetched by executing `COMPOSIO_GET_TOOL_SCHEMAS` with `tool_slugs`.
-- `composio_manage_connections`: list accounts for allowed apps. Explicit
+- `composio_manage_connections`: list accounts for apps that are not disabled. Explicit
   `reinitiate_all: true` starts OAuth for those apps.
 
 The adapter preserves Composio's workflow session IDs, account selectors, tool
@@ -137,5 +130,5 @@ connection error, since they might already have succeeded.
 Search is annotated read-only. Execution and connection management are
 conservatively annotated as potentially destructive and non-idempotent, since
 one can mutate apps and the other can initiate OAuth. These hints do not grant
-permission or replace the existing toolkit/action checks. Remote workbench,
+permission or replace the disable-list checks. Remote workbench,
 Bash, and raw proxy access remain unavailable.
