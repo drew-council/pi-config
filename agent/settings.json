@@ -1,6 +1,7 @@
 {
   "lastChangelogVersion": "1.0.2",
   "extensions": [],
+  "defaultTools": ["+codemode"],
   "npmCommand": ["bun"],
   "packages": [
     "npm:pi-web-access",
