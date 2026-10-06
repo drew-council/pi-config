@@ -14,7 +14,25 @@ export const MODEL_BLACKLIST = [
   /^github-copilot\/(?!gpt-(?:5\.[6-9]|[6-9]))/i,
 ] satisfies readonly RegExp[];
 
-type ModelLike = { provider: string; id: string; name?: string };
+type ModelLike = { provider: string; id: string; name?: string; type?: string };
+
+/** Non-chat capabilities remain disabled until explicitly authorized, in both profiles. */
+export const NON_CHAT_ALLOWLISTS: Record<ProfileName, Record<"classifier" | "image", readonly string[]>> = {
+  work: { classifier: [], image: [] },
+  personal: { classifier: [], image: [] },
+};
+
+export function modelAllowed(
+  model: ModelLike,
+  profile: ProfileName,
+  patterns: readonly RegExp[] = MODEL_BLACKLIST,
+): boolean {
+  if (!providerAllowed(profile, model.provider)) return false;
+  const type = model.type ?? "chat";
+  if (type === "chat") return !isBlacklisted(model, patterns);
+  if (type !== "classifier" && type !== "image") return false;
+  return NON_CHAT_ALLOWLISTS[profile][type].includes(`${model.provider}/${model.id}`);
+}
 
 export function isBlacklisted(model: ModelLike, patterns: readonly RegExp[] = MODEL_BLACKLIST): boolean {
   const candidates = [model.id, `${model.provider}/${model.id}`, model.name].filter((value): value is string =>
@@ -33,7 +51,7 @@ export function filterModels<T extends ModelLike>(
   profile: ProfileName,
   patterns: readonly RegExp[] = MODEL_BLACKLIST,
 ): T[] {
-  return models.filter((model) => providerAllowed(profile, model.provider) && !isBlacklisted(model, patterns));
+  return models.filter((model) => modelAllowed(model, profile, patterns));
 }
 
 type PolicyTarget = Pick<
@@ -46,7 +64,99 @@ type PolicyTarget = Pick<
   | "checkAuth"
   | "getAuth"
   | "login"
+  | "getModelsOfType"
+  | "getModelOfType"
+  | "getAvailableOfType"
+  | "getAllModels"
+  | "getAllAvailable"
+  | "classify"
+  | "generateImages"
 >;
+const typedPolicyMarker = Symbol.for("pi.model-control.typed-policy");
+
+/** Separate marker also installs these guards when /reload retains older chat-only wrappers. */
+function installTypedModelPolicy(target: PolicyTarget, profile: () => ProfileName, patterns: readonly RegExp[]): void {
+  const patched = target as PolicyTarget & { [typedPolicyMarker]?: PolicyState };
+  const existing = patched[typedPolicyMarker];
+  if (existing) {
+    existing.profile = profile;
+    existing.patterns = patterns;
+    return;
+  }
+  const state: PolicyState = { profile, patterns };
+  const visible = (model: ModelLike) => modelAllowed(model, state.profile(), state.patterns);
+  const allowedType = (type: string, provider?: string) =>
+    (type === "chat" ||
+      ((type === "image" || type === "classifier") && NON_CHAT_ALLOWLISTS[state.profile()][type].length > 0)) &&
+    (!provider || providerAllowed(state.profile(), provider));
+  const models = target.getModelsOfType;
+  const model = target.getModelOfType;
+  const available = target.getAvailableOfType;
+  const allModels = target.getAllModels;
+  const allAvailable = target.getAllAvailable;
+  const classify = target.classify;
+  const images = target.generateImages;
+  const auth = target.getAuth;
+
+  target.getAuth = async function (modelOrProvider: string | AnyModel, options) {
+    if (typeof modelOrProvider !== "string" && !visible(modelOrProvider)) {
+      throw new Error(`${modelOrProvider.provider}/${modelOrProvider.id} is unavailable by model policy.`);
+    }
+    return auth.call(this, modelOrProvider as AnyModel, options);
+  };
+  target.getModelsOfType = function (type, provider) {
+    if (!allowedType(type, provider)) return [];
+    return models.call(this, type, provider).filter((entry) => visible({ ...entry, type }));
+  };
+  target.getModelOfType = function (type, provider, id) {
+    if (!allowedType(type, provider)) return undefined;
+    const found = model.call(this, type, provider, id);
+    return found && visible({ ...found, type }) ? found : undefined;
+  };
+  target.getAvailableOfType = async function (type, provider, options) {
+    if (!allowedType(type, provider)) return [];
+    return (await available.call(this, type, provider, options)).filter((entry) => visible({ ...entry, type }));
+  };
+  target.getAllModels = function (provider) {
+    if (provider && !providerAllowed(state.profile(), provider)) return [];
+    return allModels.call(this, provider).filter(visible);
+  };
+  target.getAllAvailable = async function (provider, options) {
+    if (provider && !providerAllowed(state.profile(), provider)) return [];
+    return (await allAvailable.call(this, provider, options)).filter(visible);
+  };
+  target.classify = async function (entry, context, options) {
+    // Authorize the operation, not the caller-supplied discriminant or a prior discovery result.
+    if (!visible({ ...entry, type: "classifier" })) {
+      return {
+        api: entry.api,
+        provider: entry.provider,
+        model: entry.id,
+        answers: {},
+        timestamp: Date.now(),
+        stopReason: options?.signal?.aborted ? "aborted" : "error",
+        errorMessage: `${entry.provider}/${entry.id} is unavailable by classifier model policy.`,
+      };
+    }
+    return classify.call(this, entry, context, options);
+  };
+  target.generateImages = async function (entry, context, options) {
+    if (!visible({ ...entry, type: "image" })) {
+      return {
+        api: entry.api,
+        provider: entry.provider,
+        model: entry.id,
+        output: [],
+        timestamp: Date.now(),
+        stopReason: options?.signal?.aborted ? "aborted" : "error",
+        errorMessage: `${entry.provider}/${entry.id} is unavailable by image model policy.`,
+      };
+    }
+    return images.call(this, entry, context, options);
+  };
+  patched[typedPolicyMarker] = state;
+}
+
 const policyMarker = Symbol.for("pi.model-control.policy");
 const legacyProfileMarker = Symbol.for("pi.auth-profile.policy");
 const legacyBlacklistMarker = Symbol.for("pi.model-blacklist.patch-installed");
@@ -65,6 +175,7 @@ export function installModelPolicy(
     [legacyProfileMarker]?: LegacyPolicyState;
     [legacyBlacklistMarker]?: LegacyBlacklistState;
   };
+  installTypedModelPolicy(target, profile, patterns);
   // A live /reload can retain wrappers from the extensions this one replaces.
   // Point those wrappers at the new state so they cannot freeze the old profile.
   if (patched[legacyProfileMarker]) patched[legacyProfileMarker].profile = profile;
@@ -75,8 +186,7 @@ export function installModelPolicy(
     return;
   }
   const state: PolicyState = { profile, patterns };
-  const visible = (model: ModelLike) =>
-    providerAllowed(state.profile(), model.provider) && !isBlacklisted(model, state.patterns);
+  const visible = (model: ModelLike) => modelAllowed(model, state.profile(), state.patterns);
   const providerVisible = (provider: string) => providerAllowed(state.profile(), provider);
   const filter = <T extends ModelLike>(models: readonly T[]) => models.filter(visible);
 
