@@ -164,6 +164,37 @@ const browserLogToolSchema = {
   additionalProperties: false,
 } as const;
 
+const browserLogOutputSchema = {
+  type: "object",
+  properties: {
+    filePath: { type: "string", description: "Path to the saved JSON report containing all captured entries." },
+    summary: {
+      type: "object",
+      properties: {
+        totalEntries: { type: "integer", minimum: 0 },
+        byKind: { type: "object", additionalProperties: { type: "integer", minimum: 0 } },
+        byLevel: { type: "object", additionalProperties: { type: "integer", minimum: 0 } },
+        firstTimestampIso: { type: "string" },
+        lastTimestampIso: { type: "string" },
+      },
+      required: ["totalEntries", "byKind", "byLevel"],
+      additionalProperties: false,
+    },
+    target: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        title: { type: "string" },
+        url: { type: "string" },
+      },
+      required: ["id", "title", "url"],
+      additionalProperties: false,
+    },
+  },
+  required: ["filePath", "summary", "target"],
+  additionalProperties: false,
+} as const;
+
 class CdpClient {
   private nextId = 1;
   private readonly pending = new Map<
@@ -710,7 +741,37 @@ function resultMessage(filePath: string, report: BrowserLogReport) {
   ].join("\n");
 }
 
+function createBrowserLogTool(capture = captureBrowserLog) {
+  return {
+    name: "capture_browser_log",
+    label: "Capture Browser Log",
+    description:
+      "Capture console, exception, and browser log entries from the active Chromium tab via Chrome DevTools Protocol and save them to a structured JSON file.",
+    parameters: browserLogToolSchema,
+    outputSchema: browserLogOutputSchema,
+    async execute(_toolCallId: string, params: Partial<BrowserLogOptions>, signal?: AbortSignal) {
+      const options = normalizeBrowserLogOptions(params);
+      const { filePath, report } = await capture(options, signal);
+      const { firstTimestampIso, lastTimestampIso, ...counts } = report.summary;
+      return {
+        content: [{ type: "text" as const, text: resultMessage(filePath, report) }],
+        details: { filePath, summary: report.summary, target: report.target },
+        structuredContent: {
+          filePath,
+          summary: {
+            ...counts,
+            ...(firstTimestampIso === undefined ? {} : { firstTimestampIso }),
+            ...(lastTimestampIso === undefined ? {} : { lastTimestampIso }),
+          },
+          target: { id: report.target.id, title: report.target.title, url: report.target.url },
+        },
+      };
+    },
+  };
+}
+
 export const _test = {
+  createBrowserLogTool,
   normalizeBrowserLogOptions,
   parseBrowserLogArgs,
   isInspectablePage,
@@ -741,19 +802,5 @@ export default function browserLogExtension(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    name: "capture_browser_log",
-    label: "Capture Browser Log",
-    description:
-      "Capture console, exception, and browser log entries from the active Chromium tab via Chrome DevTools Protocol and save them to a structured JSON file.",
-    parameters: browserLogToolSchema,
-    async execute(_toolCallId, params: Partial<BrowserLogOptions>, signal) {
-      const options = normalizeBrowserLogOptions(params);
-      const { filePath, report } = await captureBrowserLog(options, signal);
-      return {
-        content: [{ type: "text", text: resultMessage(filePath, report) }],
-        details: { filePath, summary: report.summary, target: report.target },
-      };
-    },
-  });
+  pi.registerTool(createBrowserLogTool());
 }
