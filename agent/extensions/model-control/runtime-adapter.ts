@@ -57,8 +57,16 @@ async function waitForTurn(previous: Promise<void>): Promise<void> {
  * model cannot be restored, and this profile's default never applies, until the
  * orphaned pass lands a moment later and the picker shows every model again.
  *
- * Serializing refreshes keeps each pass the newest one while it runs, so a
- * resolved `refresh()` always means its own results reached the snapshot.
+ * Pi 0.99.2 added provisional availability for extension providers whose
+ * credentials were already in the initial snapshot. Pi 1.0.4 still uses that
+ * snapshot's storedProviders, not the newly rebound profile store, and still
+ * discards superseded availability passes. It does not cover this profile race.
+ * See model-control-startup-refresh.test.ts for loaded-host regressions covering
+ * both native and config registrations, startup defaults and restored models.
+ *
+ * Serializing refreshes keeps each pass the newest one while it runs (unless
+ * the bounded queue wait expires), so normal overlapping startup refreshes
+ * publish before their callers proceed to selection.
  */
 export function installSerialRefresh(target: RefreshTarget = ModelRuntime.prototype): void {
   if (target[serialRefreshMarker]) return;
