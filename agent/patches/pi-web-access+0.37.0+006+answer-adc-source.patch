@@ -1,0 +1,22 @@
+diff --git a/node_modules/pi-web-access/page-query.ts b/node_modules/pi-web-access/page-query.ts
+index 58280a5..b8f52b3 100644
+--- a/node_modules/pi-web-access/page-query.ts
++++ b/node_modules/pi-web-access/page-query.ts
+@@ -110,10 +110,15 @@ export async function answerFromPage(
+ 		? resolveModel(ctx, input.model)
+ 		: resolveModel(ctx, undefined, loadConfiguredAnswerModel());
+ 	const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+-	if (!auth.ok || !auth.apiKey) throw new Error(`No API key available for answer model ${model.provider}/${model.id}`);
+-	const sessionHeaders = openCodeSessionHeaders(model, ctx.sessionManager);
+ 	const registry = ctx.modelRegistry as typeof ctx.modelRegistry & { complete?: typeof complete };
+ 	const usesRegistryComplete = typeof registry.complete === "function";
++	// Registry-driven completions resolve provider auth at request time, so
++	// providers that authenticate without an API key (Google Vertex ADC, for
++	// example) are usable even though `auth.apiKey` is absent.
++	if (!auth.ok || (!usesRegistryComplete && !auth.apiKey)) {
++		throw new Error(`No API key available for answer model ${model.provider}/${model.id}`);
++	}
++	const sessionHeaders = openCodeSessionHeaders(model, ctx.sessionManager);
+ 	if (signal?.aborted) throw new Error("Aborted");
+ 	const completeFn = usesRegistryComplete ? registry.complete!.bind(registry) : (await awaitWithAbort(import("@earendil-works/pi-ai/compat"), signal)).complete;
+ 	if (signal?.aborted) throw new Error("Aborted");

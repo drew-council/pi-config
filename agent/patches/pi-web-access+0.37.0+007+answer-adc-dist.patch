@@ -1,0 +1,17 @@
+diff --git a/node_modules/pi-web-access/dist/index.js b/node_modules/pi-web-access/dist/index.js
+index dc4ae9e..1fc88b3 100644
+--- a/node_modules/pi-web-access/dist/index.js
++++ b/node_modules/pi-web-access/dist/index.js
+@@ -10796,10 +10796,10 @@ function responseText(content) {
+ async function answerFromPage(input, ctx, signal) {
+   const model = input.model ? resolveModel(ctx, input.model) : resolveModel(ctx, void 0, loadConfiguredAnswerModel());
+   const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+-  if (!auth.ok || !auth.apiKey) throw new Error(`No API key available for answer model ${model.provider}/${model.id}`);
+-  const sessionHeaders = openCodeSessionHeaders(model, ctx.sessionManager);
+   const registry = ctx.modelRegistry;
+   const usesRegistryComplete = typeof registry.complete === "function";
++  if (!auth.ok || !usesRegistryComplete && !auth.apiKey) throw new Error(`No API key available for answer model ${model.provider}/${model.id}`);
++  const sessionHeaders = openCodeSessionHeaders(model, ctx.sessionManager);
+   if (signal?.aborted) throw new Error("Aborted");
+   const completeFn = usesRegistryComplete ? registry.complete.bind(registry) : (await awaitWithAbort(import("@earendil-works/pi-ai/compat"), signal)).complete;
+   if (signal?.aborted) throw new Error("Aborted");
