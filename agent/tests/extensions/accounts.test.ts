@@ -173,6 +173,21 @@ describe("account initialization", () => {
     expect(readJson(profileAuthPath(agent, "work"))).toEqual({});
   });
 
+  test("seeds the Fireworks key from the work secret file into the work profile only", async () => {
+    const { root, agent } = fixture();
+    ensureProfileFiles(agent);
+    mkdirSync(join(root, "secrets"));
+    json(join(root, "secrets/personal.json"), { openrouter: { apiKey: "router-test-key" } });
+    json(join(root, "secrets/work.json"), { fireworks: { apiKey: "fireworks-test-key" } });
+    const work = await runtimeFor(agent, "work");
+    expect(await importMissingAccountKey(work, agent, "work")).toBeTrue();
+    expect((await work.getAuth("fireworks"))?.auth.apiKey).toBe("fireworks-test-key");
+    expect(readJson(profileAuthPath(agent, "work")).openrouter).toBeUndefined();
+    const personal = await runtimeFor(agent, "personal");
+    await importMissingAccountKey(personal, agent, "personal");
+    expect(readJson(profileAuthPath(agent, "personal")).fireworks).toBeUndefined();
+  });
+
   test("seeds a profile's managed key only when its store lacks one, and tolerates absent secrets", async () => {
     const { root, agent } = fixture();
     ensureProfileFiles(agent);

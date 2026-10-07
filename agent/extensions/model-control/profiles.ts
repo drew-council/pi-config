@@ -29,6 +29,7 @@ import {
   hasVertexAdc,
   importAccountKey,
   importMissingAccountKey,
+  isManagedKeyProvider,
   isProfileName,
   PROFILE_NAMES,
   type ProfileName,
@@ -517,7 +518,7 @@ export default function modelControl(pi: ExtensionAPI) {
         if (choice !== "Recheck gcloud ADC") return;
       }
     }
-    if (account.id === "openrouter") {
+    if (isManagedKeyProvider(account.id)) {
       try {
         await importAccountKey(runtime, agentDir, account.id);
         ctx.ui.notify(`${account.label}: configured from the local 1Password-injected secret file.`, "info");

@@ -13,6 +13,7 @@ export const ACCOUNTS = [
   { id: "github-copilot", profile: "work", label: "GitHub Copilot · drew-council" },
   { id: "google-vertex", profile: "work", shared: true, label: "Google Vertex AI · Sheer Health gcloud ADC" },
   { id: "claude-bridge", profile: "work", label: "Claude Code · external login" },
+  { id: "fireworks", profile: "work", label: "Fireworks AI · API key" },
   { id: "openai-codex", profile: "personal", label: "OpenAI Codex · subscription" },
   { id: "openrouter", profile: "personal", label: "OpenRouter · API key" },
   { id: "openai", profile: "personal", label: "OpenAI · ChatGPT subscription" },
@@ -143,14 +144,16 @@ const isPinnedVertex = (credential: Credential | undefined): boolean => {
   );
 };
 
-export const MANAGED_KEY_PROVIDERS = ["openrouter"] as const;
+export const MANAGED_KEY_PROVIDERS = ["openrouter", "fireworks"] as const;
 export type ManagedKeyProvider = (typeof MANAGED_KEY_PROVIDERS)[number];
 /** The API-key accounts, injected from 1Password by install.nu, that each profile may use. */
 export const managedKeyProviders = (profile: ProfileName): ManagedKeyProvider[] =>
   MANAGED_KEY_PROVIDERS.filter((provider) => providerAllowed(profile, provider));
+export const isManagedKeyProvider = (provider: string): provider is ManagedKeyProvider =>
+  (MANAGED_KEY_PROVIDERS as readonly string[]).includes(provider);
 
 export function readAccountKey(agentDir: string, provider: ManagedKeyProvider): string {
-  const profile = "personal";
+  const profile = ACCOUNTS.find((account) => account.id === provider)?.profile ?? "personal";
   const path = join(agentDir, "..", "secrets", `${profile}.json`);
   const data = readJson(path);
   const entry = data[provider] as { apiKey?: unknown } | undefined;

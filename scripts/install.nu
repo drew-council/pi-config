@@ -10,7 +10,7 @@
 # - updates/installs Pi-managed npm packages with Bun from agent/settings.json
 # - removes peer-installed Pi SDK copies that would shadow the host's SDK
 # - initializes isolated work/personal accounts, reusing gh, gcloud ADC (Vertex AI), and existing Codex logins
-# - generates the local personal secret file from its committed 1Password template
+# - generates local personal/Sheer Health secret files from committed 1Password templates
 # - verifies that Neovim is available for the embedded prompt editor
 # - verifies that Pi can resolve the configured packages
 #
@@ -19,7 +19,7 @@
 #   ./scripts/install.nu --pull              # also git pull --ff-only --autostash first
 #   ./scripts/install.nu --skip-pi-update    # do not run `pi update --extensions`
 #   ./scripts/install.nu --skip-pi-list      # do not run final `pi list`
-#   ./scripts/install.nu --force-inject      # regenerate the secret file even when its keys match
+#   ./scripts/install.nu --force-inject      # regenerate secret files even when their keys match
 
 use utils.nu *
 
@@ -161,7 +161,7 @@ def main [
   --pull (-p) # Pull this repo before installing.
   --skip-pi-update # Skip `pi update --extensions`.
   --skip-pi-list # Skip final `pi list` verification.
-  --force-inject # Regenerate the secret file even when its keys match.
+  --force-inject # Regenerate secret files even when their keys match.
 ] {
   let repo = (repo-root)
   cd $repo
@@ -171,8 +171,10 @@ def main [
   let agent_dir = ($repo | path join "agent")
   let secrets_dir = ($repo | path join "secrets")
   let personal_secrets = ($secrets_dir | path join "personal.json")
+  let work_secrets = ($secrets_dir | path join "work.json")
   # Account UUIDs reported by `op account list --format=json`.
   let personal_account = "XH4EFF5WXBGXJOIXZG4PLGILIE"
+  let work_account = "QIWPEOJ6R5GXPJFYBZFU5VL6KI" # sheerhealth.1password.com
 
   say $"Pi config repo: ($repo)"
 
@@ -189,6 +191,7 @@ def main [
   }
 
   let personal_template = ($secrets_dir | path join "personal.json.tpl")
+  let work_template = ($secrets_dir | path join "work.json.tpl")
 
   let required_commands = ["bun" "pi" "nvim"]
   for cmd in $required_commands {
@@ -211,8 +214,9 @@ def main [
   }
 
   let inject_personal = ($force_inject or not (secret-keys-match $personal_template $personal_secrets))
-  if $inject_personal and not (command-exists "op") {
-    error make {msg: "Missing required command `op`; the secret file needs to be generated."}
+  let inject_work = ($force_inject or not (secret-keys-match $work_template $work_secrets))
+  if ($inject_personal or $inject_work) and not (command-exists "op") {
+    error make {msg: "Missing required command `op`; a secret file needs to be generated."}
   }
 
   if $inject_personal {
@@ -222,7 +226,14 @@ def main [
     say "Personal secret file already has the expected keys; skipping 1Password injection"
   }
 
-  ^chmod 600 $personal_secrets
+  if $inject_work {
+    say "Generating Sheer Health work secret file"
+    ^op --account $work_account inject --in-file $work_template --out-file $work_secrets --force
+  } else {
+    say "Work secret file already has the expected keys; skipping 1Password injection"
+  }
+
+  ^chmod 600 $personal_secrets $work_secrets
 
   # Work Gemini goes through Sheer Health's Vertex AI project (ZDR/BAA) using
   # gcloud Application Default Credentials; there is no work API key to inject.
