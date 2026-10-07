@@ -11,6 +11,8 @@ export const MODEL_BLACKLIST = [
   /^gpt-(?:[0-4](?:\.\d+)?|5(?:\.[0-5])?(?:$|-))/i,
   /^claude-(?:(?:opus|sonnet|haiku|fable)-[0-4]|[0-4])(?:[-.]\d+)*(?:$|-)/i,
   /^openrouter\/(?!(?:z-ai\/glm-5\.3(?:-flash)?|deepseek\/deepseek-v4\.1-flash)$)/i,
+  // The same models as OpenRouter, pinned; routers (`*-latest`, `*-fast`) are excluded.
+  /^fireworks\/(?!accounts\/fireworks\/models\/(?:glm-5p3(?:-flash)?|deepseek-v4p1-flash)$)/i,
   /^github-copilot\/(?!gpt-(?:5\.[6-9]|[6-9]))/i,
 ] satisfies readonly RegExp[];
 

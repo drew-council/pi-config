@@ -62,6 +62,28 @@ test("model blacklist exposes only approved OpenRouter models", () => {
   );
 });
 
+test("model blacklist exposes only the pinned Fireworks equivalents of approved OpenRouter models", () => {
+  const models = [
+    { provider: "fireworks", id: "accounts/fireworks/models/glm-5p3", name: "GLM 5.3" },
+    { provider: "fireworks", id: "accounts/fireworks/models/glm-5p3-flash", name: "GLM 5.3 Flash" },
+    { provider: "fireworks", id: "accounts/fireworks/models/deepseek-v4p1-flash", name: "DeepSeek V4.1 Flash" },
+    { provider: "fireworks", id: "accounts/fireworks/models/kimi-k3", name: "Kimi K3" },
+    { provider: "fireworks", id: "accounts/fireworks/routers/glm-latest", name: "GLM Latest" },
+    { provider: "fireworks", id: "accounts/fireworks/routers/glm-flash-latest", name: "GLM Flash Latest" },
+    { provider: "fireworks", id: "accounts/fireworks/routers/glm-5p3-fast", name: "GLM 5.3 Fast" },
+    { provider: "fireworks", id: "accounts/fireworks/routers/deepseek-flash-latest", name: "DeepSeek Flash Latest" },
+  ];
+
+  assert.deepEqual(
+    blacklistOnly(models).map((model) => model.id),
+    [
+      "accounts/fireworks/models/glm-5p3",
+      "accounts/fireworks/models/glm-5p3-flash",
+      "accounts/fireworks/models/deepseek-v4p1-flash",
+    ],
+  );
+});
+
 test("blacklist patterns also match provider-qualified ids and display names", () => {
   const patterns = [/^vendor\/hidden$/i, /^Friendly hidden$/i];
   assert.equal(_test.isBlacklisted({ provider: "vendor", id: "hidden" }, patterns), true);
