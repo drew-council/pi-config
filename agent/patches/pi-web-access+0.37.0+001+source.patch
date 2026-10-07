@@ -1,8 +1,8 @@
 diff --git a/node_modules/pi-web-access/gemini-api.ts b/node_modules/pi-web-access/gemini-api.ts
-index 6ef1099..bdcd6fd 100644
+index 314d66e..40e0fc6 100644
 --- a/node_modules/pi-web-access/gemini-api.ts
 +++ b/node_modules/pi-web-access/gemini-api.ts
-@@ -6,7 +6,7 @@ const DEFAULT_API_HOST = "https://generativelanguage.googleapis.com";
+@@ -14,7 +14,7 @@ const DEFAULT_API_HOST = "https://generativelanguage.googleapis.com";
  const API_VERSION = "v1beta";
  export const API_BASE = `${DEFAULT_API_HOST}/${API_VERSION}`;
  const CONFIG_PATH = getWebSearchConfigPath();
@@ -12,7 +12,7 @@ index 6ef1099..bdcd6fd 100644
  interface GeminiApiConfig {
  	geminiApiKey?: unknown;
 diff --git a/node_modules/pi-web-access/video-extract.ts b/node_modules/pi-web-access/video-extract.ts
-index 127a554..c948b0d 100644
+index 7b351e2..aae87ac 100644
 --- a/node_modules/pi-web-access/video-extract.ts
 +++ b/node_modules/pi-web-access/video-extract.ts
 @@ -32,11 +32,22 @@ const VIDEO_EXTENSIONS: Record<string, string> = {
@@ -156,7 +156,7 @@ index 127a554..c948b0d 100644
  	} finally {
  		if (fileName) deleteGeminiFile(fileName, apiKey);
 diff --git a/node_modules/pi-web-access/youtube-extract.ts b/node_modules/pi-web-access/youtube-extract.ts
-index da7b480..5775a56 100644
+index f70b36e..f6314c8 100644
 --- a/node_modules/pi-web-access/youtube-extract.ts
 +++ b/node_modules/pi-web-access/youtube-extract.ts
 @@ -49,7 +49,7 @@ function normalizeEnabled(value: unknown, fallback: boolean): boolean {

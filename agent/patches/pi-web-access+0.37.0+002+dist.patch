@@ -1,7 +1,8 @@
 diff --git a/node_modules/pi-web-access/dist/index.js b/node_modules/pi-web-access/dist/index.js
+index c533477..c0be344 100644
 --- a/node_modules/pi-web-access/dist/index.js
 +++ b/node_modules/pi-web-access/dist/index.js
-@@ -2355,7 +2355,7 @@
+@@ -2226,7 +2226,7 @@ var init_gemini_api = __esm({
      API_VERSION = "v1beta";
      API_BASE = `${DEFAULT_API_HOST}/${API_VERSION}`;
      CONFIG_PATH3 = getWebSearchConfigPath();
@@ -10,17 +11,17 @@ diff --git a/node_modules/pi-web-access/dist/index.js b/node_modules/pi-web-acce
      cachedConfig3 = null;
      responseCredentials = /* @__PURE__ */ new WeakMap();
    }
-@@ -8065,7 +8065,7 @@
+@@ -8086,7 +8086,7 @@ var init_youtube_extract = __esm({
  
  Format as markdown.`;
      YOUTUBE_REGEX = /(?:(?:www\.|m\.)?youtube\.com\/(?:watch\?.*v=|shorts\/|live\/|embed\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
 -    defaults = { enabled: true, preferredModel: "gemini-3.6-flash" };
 +    defaults = { enabled: true, preferredModel: "gemini-3.8-flash" };
-     cachedConfig35 = null;
+     cachedConfig37 = null;
    }
  });
-@@ -8531,9 +8531,21 @@
- import { existsSync as existsSync48, readFileSync as readFileSync50, readdirSync as readdirSync4, statSync as statSync3 } from "node:fs";
+@@ -8552,9 +8552,20 @@ import { execFileSync as execFileSync2 } from "node:child_process";
+ import { existsSync as existsSync50, readFileSync as readFileSync52, readdirSync as readdirSync4, statSync as statSync3 } from "node:fs";
  import { readFile as readFile2 } from "node:fs/promises";
  import { resolve, extname as extname2, basename as basename4, join as join7, dirname as dirname2 } from "node:path";
 +function videoErrorMessage(err) {
@@ -28,8 +29,7 @@ diff --git a/node_modules/pi-web-access/dist/index.js b/node_modules/pi-web-acce
 +}
 +function videoAddAttemptError(errors, label, err) {
 +  const message = videoErrorMessage(err).replace(/\s+/g, " ").trim();
-+  if (message)
-+    errors.push(`${label}: ${message}`);
++  if (message) errors.push(`${label}: ${message}`);
 +}
 +const VIDEO_MODEL_FALLBACKS = ["gemini-2.5-flash", "gemini-flash-latest"];
 +function videoModelsToTry(preferred) {
@@ -43,7 +43,7 @@ diff --git a/node_modules/pi-web-access/dist/index.js b/node_modules/pi-web-acce
  }
  function normalizePreferredModel2(value, fallback) {
    if (typeof value !== "string") return fallback;
-@@ -8632,7 +8644,8 @@
+@@ -8653,7 +8664,8 @@ async function extractVideo(info, signal, options) {
      return { url: info.absolutePath, title: displayName, content: error, error };
    }
    const activityId = activityMonitor.logStart({ type: "fetch", url: `video:${displayName}` });
@@ -53,7 +53,7 @@ diff --git a/node_modules/pi-web-access/dist/index.js b/node_modules/pi-web-acce
    if (result) {
      if (canAttachImages()) {
        const thumbnail = await extractVideoFrame(info.absolutePath);
-@@ -8647,8 +8660,12 @@
+@@ -8668,8 +8680,12 @@ async function extractVideo(info, signal, options) {
      activityMonitor.logComplete(activityId, 0);
      return null;
    }
@@ -62,13 +62,13 @@ diff --git a/node_modules/pi-web-access/dist/index.js b/node_modules/pi-web-acce
 +  const error = attemptErrors.length > 0 ? ["Could not analyze local video.", "", ...attemptErrors.map((message) => `- ${message}`)].join(`
 +`) : `Video analysis requires Gemini access. Either:
 +  1. Sign into gemini.google.com in Chrome (free, uses cookies)
-+  2. Set GEMINI_API_KEY in ${CONFIG_PATH44}`;
++  2. Set GEMINI_API_KEY in ${CONFIG_PATH46}`;
 +  activityMonitor.logError(activityId, error);
 +  return { url: info.absolutePath, title: "", content: "", error };
  }
  function mapFfprobeError(err) {
    const { code, stderr, message } = readExecError(err);
-@@ -8695,55 +8712,78 @@
+@@ -8716,7 +8732,7 @@ async function getLocalVideoDuration(filePath) {
      return { error: mapFfprobeError(err) };
    }
  }
@@ -76,52 +76,25 @@ diff --git a/node_modules/pi-web-access/dist/index.js b/node_modules/pi-web-acce
 +async function tryVideoGeminiWeb(info, prompt, model, signal, attemptErrors = []) {
    try {
      const cookies = await isGeminiWebAvailable();
--    if (!cookies) return null;
--    if (signal?.aborted) return null;
--    const text2 = await queryWithCookies(prompt, cookies, {
-+    if (!cookies)
-+      return null;
-+    if (signal?.aborted)
-+      return null;
-+    const text = await queryWithCookies(prompt, cookies, {
-       files: [info.absolutePath],
-       ...model !== "gemini-3.6-flash" ? { model } : {},
-       signal,
--      timeoutMs: 18e4
-+      timeoutMs: 180000
-     });
-     return {
-       url: info.absolutePath,
--      title: extractVideoTitle(text2, info.absolutePath),
--      content: text2,
-+      title: extractVideoTitle(text, info.absolutePath),
-+      content: text,
-       error: null
+     if (!cookies) return null;
+@@ -8735,10 +8751,11 @@ async function tryVideoGeminiWeb(info, prompt, model, signal) {
      };
    } catch (err) {
--    if (shouldRethrow3(err)) throw err;
-+    if (shouldRethrow3(err))
-+      throw err;
-+    if (!signal?.aborted)
-+      videoAddAttemptError(attemptErrors, "Gemini Web", err);
+     if (shouldRethrow3(err)) throw err;
++    if (!signal?.aborted) videoAddAttemptError(attemptErrors, "Gemini Web", err);
      return null;
    }
  }
 -async function tryVideoGeminiApi(info, prompt, model, signal) {
 +async function tryVideoGeminiApi(info, prompt, model, signal, attemptErrors = []) {
    const apiKey = await getApiKey(signal);
--  if (!apiKey) return null;
--  if (signal?.aborted) return null;
-+  if (!apiKey)
-+    return null;
-+  if (signal?.aborted)
-+    return null;
-   let fileName = null;
-   try {
+   if (!apiKey) return null;
+   if (signal?.aborted) return null;
+@@ -8747,21 +8764,31 @@ async function tryVideoGeminiApi(info, prompt, model, signal) {
      const uploaded = await uploadToFilesApi(info, apiKey, signal);
      fileName = uploaded.name;
--    await pollFileState(fileName, apiKey, signal, 12e4);
--    const text2 = await queryGeminiApiWithVideo(prompt, uploaded.uri, {
+     await pollFileState(fileName, apiKey, signal, 12e4);
+-    const text3 = await queryGeminiApiWithVideo(prompt, uploaded.uri, {
 -      apiKey,
 -      model,
 -      mimeType: info.mimeType,
@@ -130,51 +103,39 @@ diff --git a/node_modules/pi-web-access/dist/index.js b/node_modules/pi-web-acce
 -    });
 -    return {
 -      url: info.absolutePath,
--      title: extractVideoTitle(text2, info.absolutePath),
--      content: text2,
+-      title: extractVideoTitle(text3, info.absolutePath),
+-      content: text3,
 -      error: null
 -    };
-+    await pollFileState(fileName, apiKey, signal, 120000);
 +    for (const candidate of videoModelsToTry(model)) {
-+      if (signal?.aborted)
-+        return null;
++      if (signal?.aborted) return null;
 +      try {
-+        const text = await queryGeminiApiWithVideo(prompt, uploaded.uri, {
++        const text3 = await queryGeminiApiWithVideo(prompt, uploaded.uri, {
 +          apiKey,
 +          model: candidate,
 +          mimeType: info.mimeType,
 +          signal,
-+          timeoutMs: 120000
++          timeoutMs: 12e4
 +        });
 +        return {
 +          url: info.absolutePath,
-+          title: extractVideoTitle(text, info.absolutePath),
-+          content: text,
++          title: extractVideoTitle(text3, info.absolutePath),
++          content: text3,
 +          error: null
 +        };
 +      } catch (err) {
-+        if (shouldRethrow3(err))
-+          throw err;
-+        if (!signal?.aborted)
-+          videoAddAttemptError(attemptErrors, `Gemini API (${candidate})`, err);
++        if (shouldRethrow3(err)) throw err;
++        if (!signal?.aborted) videoAddAttemptError(attemptErrors, `Gemini API (${candidate})`, err);
 +      }
 +    }
 +    return null;
    } catch (err) {
--    if (shouldRethrow3(err)) throw err;
-+    if (shouldRethrow3(err))
-+      throw err;
-+    if (!signal?.aborted)
-+      videoAddAttemptError(attemptErrors, "Gemini API", err);
+     if (shouldRethrow3(err)) throw err;
++    if (!signal?.aborted) videoAddAttemptError(attemptErrors, "Gemini API", err);
      return null;
    } finally {
--    if (fileName) deleteGeminiFile(fileName, apiKey);
-+    if (fileName)
-+      deleteGeminiFile(fileName, apiKey);
-   }
- }
- async function uploadToFilesApi(info, apiKey, signal) {
-@@ -8837,7 +8877,7 @@
+     if (fileName) deleteGeminiFile(fileName, apiKey);
+@@ -8858,7 +8885,7 @@ Format as markdown.`;
      };
      VIDEO_CONFIG_DEFAULTS = {
        enabled: true,
