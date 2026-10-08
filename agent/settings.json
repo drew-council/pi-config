@@ -10,6 +10,7 @@
       "prompts": []
     },
     "npm:pi-multi-skills",
+    "npm:@bizmyth/pi-vertex-gemini-search",
     "npm:@bizmyth/pi-review",
     "npm:@bizmyth/pi-git-conflicts",
     "npm:@bizmyth/pi-neovim-editor",
