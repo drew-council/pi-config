@@ -1,110 +1,203 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
-import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage, AssistantMessageEvent, Context, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import { type ExtensionAPI, initTheme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import vertexGeminiSearch from "../../extensions/vertex-gemini-search/index.js";
 
-test("searches go to the pinned Vertex project with ADC tokens, falling back from hung Flex", async () => {
-  const root = await mkdtemp(join(tmpdir(), "pi-vertex-gemini-search-"));
-  const adc = join(root, "adc.json");
-  await writeFile(
-    adc,
-    JSON.stringify({ type: "authorized_user", client_id: "id", client_secret: "secret", refresh_token: "refresh" }),
-  );
-  const previous = { adc: process.env.GOOGLE_APPLICATION_CREDENTIALS, project: process.env.VERTEX_PROJECT_ID };
-  const realFetch = globalThis.fetch;
-  process.env.GOOGLE_APPLICATION_CREDENTIALS = adc;
-  // Ambient overrides from the upstream package must not redirect traffic.
-  process.env.VERTEX_PROJECT_ID = "someone-elses-project";
-  const calls: { url: string; init?: RequestInit }[] = [];
-  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = String(input);
-    calls.push({ url, init });
-    if (url === "https://oauth2.googleapis.com/token") {
-      assert.equal(new URLSearchParams(String(init?.body)).get("refresh_token"), "refresh");
-      return Response.json({ access_token: "token-1", expires_in: 3600 });
-    }
-    if (url.startsWith("https://vertexaisearch.cloud.google.com/")) {
-      return new Response(null, { status: 302, headers: { location: "https://example.com/release" } });
-    }
-    const headers = init?.headers as Record<string, string>;
-    // Flex queues on this project until the request times out.
-    if (headers["X-Vertex-AI-LLM-Shared-Request-Type"] === "flex") throw new DOMException("timed out", "TimeoutError");
-    return Response.json({
-      candidates: [
-        {
-          content: { parts: [{ text: "thinking", thought: true }, { text: "Version 2 shipped." }] },
-          groundingMetadata: {
-            webSearchQueries: ["version 2 release"],
-            groundingChunks: [{ web: { uri: "https://vertexaisearch.cloud.google.com/redirect/abc" } }],
-          },
+const PINNED = {
+  GOOGLE_CLOUD_PROJECT: "optimum-nebula-375615",
+  GOOGLE_CLOUD_LOCATION: "global",
+  GOOGLE_APPLICATION_CREDENTIALS: "/adc.json",
+};
+const REDIRECT = "https://vertexaisearch.cloud.google.com/redirect/abc";
+
+function message(stopReason: AssistantMessage["stopReason"], text = ""): AssistantMessage {
+  return {
+    role: "assistant",
+    api: "google-vertex",
+    provider: "google-vertex",
+    model: "gemini-3.8-flash",
+    content: text ? [{ type: "text", text }] : [],
+    usage: {
+      input: 1000,
+      output: 100,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 1100,
+      cost: { input: 0.00075, output: 0.000375, cacheRead: 0, cacheWrite: 0, total: 0.001125 },
+    },
+    stopReason,
+    timestamp: Date.now(),
+  };
+}
+
+interface Call {
+  context: Context;
+  options: SimpleStreamOptions;
+  payload: { config: { tools?: unknown[]; labels?: Record<string, string> } };
+}
+
+/** A registry whose Vertex provider hangs on Flex and answers with grounding on standard. */
+function fakeRegistry(env: Record<string, string>) {
+  const calls: Call[] = [];
+  const registry = {
+    find: (provider: string, id: string) => (provider === "google-vertex" ? { provider, id } : undefined),
+    getApiKeyAndHeaders: async () => ({ ok: true, env }),
+    streamSimple(_model: unknown, context: Context, options: SimpleStreamOptions) {
+      const flex = (options.headers as Record<string, string> | undefined)?.["X-Vertex-AI-LLM-Shared-Request-Type"];
+      return {
+        async *[Symbol.asyncIterator](): AsyncGenerator<AssistantMessageEvent> {
+          const payload = (await options.onPayload?.({ model: "gemini-3.8-flash", config: { maxOutputTokens: 1 } }, {
+            id: "gemini-3.8-flash",
+          } as never)) as Call["payload"];
+          calls.push({ context, options, payload });
+          if (flex) return;
+          await options.onProviderStreamEvent?.({ candidates: [{ content: {} }] }, {} as never);
+          for (const delta of ["Version 2 ", "shipped."]) {
+            yield { type: "text_delta", contentIndex: 0, delta, partial: message("pending") };
+          }
+          await options.onProviderStreamEvent?.(
+            {
+              candidates: [
+                {
+                  groundingMetadata: {
+                    webSearchQueries: ["version 2 release"],
+                    groundingChunks: [{ web: { uri: REDIRECT } }, { web: { uri: REDIRECT } }],
+                  },
+                },
+              ],
+            },
+            {} as never,
+          );
         },
-      ],
-      usageMetadata: { promptTokenCount: 1000, candidatesTokenCount: 100 },
-    });
+        result: async () => (flex ? message("aborted") : message("stop", "Version 2 shipped.")),
+      };
+    },
+  };
+  return { registry, calls };
+}
+
+function load() {
+  const tools = new Map<string, ToolDefinition>();
+  let pricing: ((args: string, ctx: unknown) => Promise<void>) | undefined;
+  vertexGeminiSearch({
+    registerCommand: (_name: string, command: { handler: typeof pricing }) => {
+      pricing = command.handler;
+    },
+    registerTool: (tool: ToolDefinition) => tools.set(tool.name, tool),
+  } as unknown as ExtensionAPI);
+  return { tools, pricing: (args: string) => pricing?.(args, { ui: { notify: () => {} } }) };
+}
+
+test("searches run through the pinned google-vertex provider with grounding, usage, and structured output", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    assert.equal(String(input), REDIRECT);
+    return new Response(null, { status: 302, headers: { location: "https://example.com/release" } });
   }) as typeof fetch;
-
   try {
-    const tools = new Map<string, ToolDefinition>();
-    let setPricing: ((args: string, ctx: unknown) => Promise<void>) | undefined;
-    vertexGeminiSearch({
-      registerCommand: (_name: string, command: { handler: typeof setPricing }) => {
-        setPricing = command.handler;
-      },
-      registerTool: (tool: ToolDefinition) => tools.set(tool.name, tool),
-    } as unknown as ExtensionAPI);
+    const { tools, pricing } = load();
     assert.deepEqual([...tools.keys()], ["web_search", "web_research"]);
+    for (const tool of tools.values()) {
+      assert.equal(tool.annotations?.readOnlyHint, true);
+      assert.equal(tool.annotations?.openWorldHint, true);
+      assert.ok(tool.outputSchema);
+    }
 
-    const ctx = {
-      modelRegistry: {
-        find: (provider: string, id: string) =>
-          provider === "google-vertex" && id === "gemini-3.8-flash" ? { cost: { input: 1, output: 10 } } : undefined,
-      },
-    };
+    const { registry, calls } = fakeRegistry(PINNED);
+    const updates: string[] = [];
     const search = (name: string) =>
-      tools.get(name)?.execute("call", { query: "latest version?" }, undefined, undefined, ctx as never);
+      tools
+        .get(name)
+        ?.execute(
+          "call",
+          { query: "latest version?" },
+          undefined,
+          (partial) => updates.push(partial.content[0]?.type === "text" ? partial.content[0].text : ""),
+          { modelRegistry: registry } as never,
+        );
 
     const result = await search("web_search");
-    const text = result.content.map((part) => (part.type === "text" ? part.text : "")).join("");
-    assert.ok(!result.isError, text);
-    assert.match(text, /Version 2 shipped\./);
-    assert.doesNotMatch(text, /thinking/);
-    assert.match(text, /1\. example\.com — https:\/\/example\.com\/release/);
-    assert.match(text, /gemini-3\.8-flash, global, \$0\.0160, 1 source, standard pricing/);
+    assert.equal(
+      result.content[0]?.type === "text" && result.content[0].text,
+      ["Version 2 shipped.", "", "Sources:", "1. example.com — https://example.com/release"].join("\n"),
+    );
+    assert.deepEqual(result.structuredContent, result.details);
+    assert.deepEqual(result.details, {
+      answer: "Version 2 shipped.",
+      sources: [{ host: "example.com", url: "https://example.com/release" }],
+      searchQueries: ["version 2 release"],
+      model: "gemini-3.8-flash",
+      location: "global",
+      serviceTier: "standard",
+      costUsd: 0.015125,
+    });
+    // Token cost plus one grounded query, so the session total includes the search.
+    assert.equal(result.usage?.cost.total, 0.015125);
+    assert.deepEqual(updates, ["Version 2 ", "Version 2 shipped."]);
 
-    const endpoint =
-      "https://aiplatform.googleapis.com/v1/projects/optimum-nebula-375615/locations/global/publishers/google/models/gemini-3.8-flash:generateContent";
-    const isFlex = (call: (typeof calls)[number]) =>
-      (call.init?.headers as Record<string, string> | undefined)?.["X-Vertex-AI-LLM-Shared-Request-Type"] === "flex";
-    const vertexCalls = calls.filter((call) => call.url === endpoint);
-    assert.deepEqual(vertexCalls.map(isFlex), [false], "standard pricing is the default");
-    assert.equal((vertexCalls[0].init?.headers as Record<string, string>).Authorization, "Bearer token-1");
+    assert.equal(calls.length, 1, "standard pricing is the default");
+    assert.equal(calls[0].options.headers, undefined);
+    assert.equal(calls[0].options.maxTokens, 2000);
+    assert.match(calls[0].context.systemPrompt ?? "", /QUICK verification/);
+    assert.deepEqual(calls[0].payload.config.tools, [{ googleSearch: {} }, { urlContext: {} }]);
+    assert.equal(calls[0].payload.config.labels?.tier, "standard");
 
-    // Opting into Flex falls back to standard at once when Flex hangs, reusing the cached token.
-    await setPricing?.("flex", { ui: { notify: () => {} } });
+    // Opting into Flex falls back to standard when Flex fails, then stays on standard.
+    await pricing("flex");
     calls.length = 0;
     const research = await search("web_research");
-    assert.ok(!research.isError);
-    assert.match(research.content[0].type === "text" ? research.content[0].text : "", /standard pricing/);
+    assert.equal((research.details as { serviceTier: string }).serviceTier, "standard");
+    await search("web_research");
     assert.deepEqual(
-      calls.map((call) => [call.url, isFlex(call)]),
-      [
-        [endpoint, true],
-        [endpoint, false],
-        ["https://vertexaisearch.cloud.google.com/redirect/abc", false],
-      ],
+      calls.map((call) => call.payload.config.labels?.tier),
+      ["flex", "standard", "standard"],
     );
+    assert.equal(calls[1].options.maxTokens, 12000);
   } finally {
     globalThis.fetch = realFetch;
-    for (const [name, value] of [
-      ["GOOGLE_APPLICATION_CREDENTIALS", previous.adc],
-      ["VERTEX_PROJECT_ID", previous.project],
-    ] as const) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
-    await rm(root, { recursive: true, force: true });
   }
+});
+
+test("searches refuse credentials not pinned to Sheer Health's Vertex project", async () => {
+  const { tools } = load();
+  const run = (env: Record<string, string>) =>
+    tools
+      .get("web_search")
+      ?.execute("call", { query: "q" }, undefined, undefined, { modelRegistry: fakeRegistry(env).registry } as never);
+  await assert.rejects(run({ ...PINNED, GOOGLE_CLOUD_PROJECT: "someone-elses-project" }), /\/log-me-in/);
+  await assert.rejects(run({}), /\/log-me-in/);
+  const { GOOGLE_APPLICATION_CREDENTIALS: _, ...withoutAdc } = PINNED;
+  await assert.rejects(run(withoutAdc), /gcloud auth application-default login/);
+});
+
+test("collapsed results preview the answer; expanded results add the sources", () => {
+  initTheme("dark", false);
+  const { tools } = load();
+  const render = tools.get("web_search")?.renderResult;
+  assert.ok(render);
+  const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
+  const result = {
+    content: [{ type: "text" as const, text: "unused" }],
+    details: {
+      answer: ["one", "two", "three", "four", "five"].join("\n"),
+      sources: [{ host: "example.com", url: "https://example.com/a" }],
+      searchQueries: [],
+      model: "gemini-3.8-flash",
+      location: "global",
+      serviceTier: "standard",
+      costUsd: 0.015,
+    },
+  };
+  const draw = (expanded: boolean) =>
+    render(result, { expanded, isPartial: false }, theme as never, { isError: false } as never)
+      .render(200)
+      .join("\n");
+  const collapsed = draw(false);
+  assert.match(collapsed, /gemini-3\.8-flash · global · \$0\.0150 · 1 source · standard pricing/);
+  assert.match(collapsed, /four/);
+  assert.doesNotMatch(collapsed, /five|example\.com/);
+  const expanded = draw(true);
+  assert.match(expanded, /five/);
+  assert.match(expanded, /example\.com/);
 });

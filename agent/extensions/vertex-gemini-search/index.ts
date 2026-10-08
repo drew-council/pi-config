@@ -15,44 +15,39 @@
  * links. They are resolved to their pure destination URLs (via the 302
  * `location` header, no body download) so only clean links enter your context.
  *
- * Requests always go to Sheer Health's pinned Vertex project (ZDR/BAA), in
- * every profile, authenticated with the same gcloud Application Default
- * Credentials as the `google-vertex` model provider. Ambient env vars cannot
- * redirect them.
+ * Requests go through Pi's `google-vertex` provider with the active profile's
+ * stored credential, so they use the same Sheer Health project (ZDR/BAA) and
+ * gcloud Application Default Credentials as Vertex chat models. The extension
+ * refuses to run unless that credential is pinned to the project, so ambient
+ * GOOGLE_CLOUD_* env vars cannot redirect searches.
  */
 
-import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { promisify } from "node:util";
-import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
-import { Type } from "typebox";
-import { VERTEX_ENV, vertexAdcPath } from "../shared/accounts.js";
+import type { Api, AssistantMessage, Model, Usage } from "@earendil-works/pi-ai";
+import {
+  type ExtensionAPI,
+  type ExtensionToolContext,
+  getMarkdownTheme,
+  keyHint,
+  type Theme,
+} from "@earendil-works/pi-coding-agent";
+import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
+import { type Static, Type } from "typebox";
+import { VERTEX_ENV } from "../shared/accounts.js";
 
-const VERTEX_PROJECT_ID = VERTEX_ENV.GOOGLE_CLOUD_PROJECT;
-const VERTEX_REGION = VERTEX_ENV.GOOGLE_CLOUD_LOCATION;
 const VERTEX_PROVIDER = "google-vertex";
 // The model blacklist in model-control/policy.ts only permits Gemini 3.8+.
-const GEMINI_MODEL_SHORT = "gemini-3.8-flash";
-const GEMINI_MODEL_LONG = "gemini-3.8-flash";
-const GEMINI_ENDPOINT = (model: string) => {
-  const host = VERTEX_REGION === "global" ? "aiplatform.googleapis.com" : `${VERTEX_REGION}-aiplatform.googleapis.com`;
-  return `https://${host}/v1/projects/${VERTEX_PROJECT_ID}/locations/${VERTEX_REGION}/publishers/google/models/${model}:generateContent`;
-};
+const GEMINI_MODEL = "gemini-3.8-flash";
 const MAX_SOURCES = 6;
 const SEARCH_GROUNDING_USD_PER_1000 = 14;
 const FLEX_TOKEN_DISCOUNT = 0.5;
-type PricingPreference = "flex" | "standard";
-// Flex requests hang until timeout on Sheer Health's project, and grounding
+const FLEX_HEADERS = { "X-Vertex-AI-LLM-Shared-Request-Type": "flex", "X-Vertex-AI-LLM-Request-Type": "shared" };
+const COLLAPSED_ANSWER_LINES = 4;
+type ServiceTier = "flex" | "standard";
+type Depth = "short" | "long";
+// Flex has hung until timeout on Sheer Health's project, and grounding
 // dominates the cost anyway, so Flex is opt-in via /search-pricing.
-let pricingPreference: PricingPreference = "standard";
+let pricingPreference: ServiceTier = "standard";
 let flexUnavailableForSession = false;
-// Transient statuses Google recommends retrying with exponential backoff.
-// 503 in particular signals temporary overload / high demand on the model.
-const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
-const MAX_RETRIES = 3; // total attempts per tier = MAX_RETRIES + 1
-const MAX_BACKOFF_MS = 16_000;
-const MAX_RETRY_AFTER_MS = 60_000;
 
 const SYSTEM_INSTRUCTION = `You are a web research assistant with live internet access via two tools: google_search (web search) and url_context (fetch & read specific URLs the user gives you).
 RULES:
@@ -65,102 +60,42 @@ RULES:
 - If results are uncertain, missing, or conflicting, say so briefly.
 - Cite which sources support key claims where useful.`;
 
-const ADC_LOGIN_HINT = "Run `gcloud auth application-default login` as your Sheer Health account.";
-const TOKEN_REFRESH_MARGIN_MS = 60_000;
-let cachedToken: { token: string; expiresAt: number; source: string } | undefined;
+const DEPTHS: Record<Depth, { instruction: string; maxTokens: number; timeoutMs: Record<ServiceTier, number> }> = {
+  short: {
+    instruction: `${SYSTEM_INSTRUCTION}\nThis is a QUICK verification query. Answer as concisely as possible — ideally one to three sentences. Only include the essential fact(s) needed to verify or check.`,
+    maxTokens: 2000,
+    timeoutMs: { flex: 60_000, standard: 60_000 },
+  },
+  long: {
+    instruction: `${SYSTEM_INSTRUCTION}\nThis is a COMPLEX research query. Provide a thorough, well-structured answer covering the key facets of the topic. Organize with short sections or bullet points where helpful. Aim for completeness over brevity.`,
+    maxTokens: 12000,
+    timeoutMs: { flex: 160_000, standard: 260_000 },
+  },
+};
 
-/**
- * Mints an access token from the gcloud ADC file. `authorized_user` files (from
- * `gcloud auth application-default login`) are exchanged directly; any other
- * credential type is delegated to gcloud. Tokens are cached until shortly
- * before they expire.
- */
-async function resolveAccessToken(signal: AbortSignal): Promise<string> {
-  const path = vertexAdcPath();
-  if (cachedToken && cachedToken.source === path && cachedToken.expiresAt > Date.now()) return cachedToken.token;
+const SearchOutput = Type.Object({
+  answer: Type.String(),
+  sources: Type.Array(Type.Object({ host: Type.String(), url: Type.String() })),
+  searchQueries: Type.Array(Type.String()),
+  model: Type.String(),
+  location: Type.String(),
+  serviceTier: Type.Union([Type.Literal("flex"), Type.Literal("standard")]),
+  costUsd: Type.Number({ description: "Estimated token plus Google Search grounding cost" }),
+});
+type SearchOutput = Static<typeof SearchOutput>;
 
-  let adc: { type?: string; client_id?: string; client_secret?: string; refresh_token?: string };
-  try {
-    adc = JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    throw new Error(`No readable gcloud Application Default Credentials at ${path}. ${ADC_LOGIN_HINT}`);
-  }
-
-  if (adc.type === "authorized_user" && adc.client_id && adc.client_secret && adc.refresh_token) {
-    const response = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        client_id: adc.client_id,
-        client_secret: adc.client_secret,
-        refresh_token: adc.refresh_token,
-      }),
-      signal,
-    });
-    const body = (await response.json().catch(() => ({}))) as { access_token?: string; expires_in?: number };
-    if (!response.ok || !body.access_token) {
-      // Never echo the response body: it can contain credential details.
-      throw new Error(`gcloud ADC token refresh failed (${response.status}). ${ADC_LOGIN_HINT}`);
-    }
-    cachedToken = {
-      token: body.access_token,
-      expiresAt: Date.now() + (body.expires_in ?? 3600) * 1000 - TOKEN_REFRESH_MARGIN_MS,
-      source: path,
-    };
-    return body.access_token;
-  }
-
-  try {
-    const { stdout } = await promisify(execFile)("gcloud", ["auth", "application-default", "print-access-token"], {
-      encoding: "utf-8",
-      env: { ...process.env, GOOGLE_APPLICATION_CREDENTIALS: path },
-      signal,
-      timeout: 30_000,
-    });
-    const token = stdout.trim();
-    if (!token) throw new Error("empty token");
-    // gcloud does not report the expiry; its tokens last an hour.
-    cachedToken = { token, expiresAt: Date.now() + 3_000_000, source: path };
-    return token;
-  } catch {
-    throw new Error(`Could not get a Vertex AI access token from gcloud ADC (${path}). ${ADC_LOGIN_HINT}`);
-  }
+interface Grounding {
+  queries: Set<string>;
+  urls: Set<string>;
 }
 
-interface GeminiResponse {
+interface GroundingChunk {
   candidates?: Array<{
-    content?: { parts?: Array<{ text?: string; thought?: boolean }> };
     groundingMetadata?: {
       webSearchQueries?: string[];
-      groundingChunks?: Array<{ web?: { uri?: string; title?: string } }>;
+      groundingChunks?: Array<{ web?: { uri?: string } }>;
     };
   }>;
-  usageMetadata?: {
-    promptTokenCount?: number;
-    candidatesTokenCount?: number;
-    thoughtsTokenCount?: number;
-    totalTokenCount?: number;
-    toolUsePromptTokenCount?: number;
-  };
-  error?: { message?: string };
-}
-
-interface SourceLink {
-  index: number;
-  host: string;
-  url: string;
-}
-
-interface CostEstimate {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  searchQueries: number;
-  tokenUsd: number;
-  groundingUsd: number;
-  totalUsd: number;
-  pricingNote: string;
 }
 
 /**
@@ -191,405 +126,267 @@ function hostOf(url: string): string {
   }
 }
 
-/** Token rates (USD per million) come from the `google-vertex` model catalog. */
-function modelPricingUsdPerMillion(ctx: ExtensionToolContext, model: string): { input: number; output: number } {
-  const cost = ctx.modelRegistry.find(VERTEX_PROVIDER, model)?.cost;
-  return { input: cost?.input ?? 0, output: cost?.output ?? 0 };
-}
-
 function money(amount: number): string {
   if (amount < 0.01) return `$${amount.toFixed(6)}`;
   return `$${amount.toFixed(4)}`;
 }
 
-function estimateCost(params: {
-  model: string;
-  pricing: { input: number; output: number };
-  serviceTier: "flex" | "standard";
-  usage?: GeminiResponse["usageMetadata"];
-  searchQueries: number;
-}): CostEstimate {
-  const inputTokens = params.usage?.promptTokenCount ?? 0;
-  const outputTokens = (params.usage?.candidatesTokenCount ?? 0) + (params.usage?.thoughtsTokenCount ?? 0);
-  const totalTokens = params.usage?.totalTokenCount ?? inputTokens + outputTokens;
-  const standardTokenUsd = (inputTokens * params.pricing.input + outputTokens * params.pricing.output) / 1_000_000;
-  const tokenDiscount = params.serviceTier === "flex" ? FLEX_TOKEN_DISCOUNT : 1;
-  const tokenUsd = standardTokenUsd * tokenDiscount;
-  const groundingUsd = (params.searchQueries * SEARCH_GROUNDING_USD_PER_1000) / 1000;
-  const totalUsd = tokenUsd + groundingUsd;
+/**
+ * Resolves the Vertex model and checks that the active profile's credential
+ * is pinned to Sheer Health's project. Without the pin, the provider would
+ * fall back to ambient GOOGLE_CLOUD_* env vars or a stored API key.
+ */
+async function resolveVertex(ctx: ExtensionToolContext): Promise<{ model: Model<Api>; location: string }> {
+  const model = ctx.modelRegistry.find(VERTEX_PROVIDER, GEMINI_MODEL);
+  if (!model) throw new Error(`${VERTEX_PROVIDER}/${GEMINI_MODEL} is not in Pi's model catalog.`);
+  const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+  if (!auth.ok || auth.apiKey || auth.env?.GOOGLE_CLOUD_PROJECT !== VERTEX_ENV.GOOGLE_CLOUD_PROJECT) {
+    throw new Error(
+      "Google Vertex AI is not pinned to Sheer Health's project in this profile. Run /log-me-in and choose Google Vertex AI.",
+    );
+  }
+  if (!auth.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    throw new Error(
+      "No gcloud Application Default Credentials. Run `gcloud auth application-default login` as your Sheer Health account, then /log-me-in to recheck Google Vertex AI.",
+    );
+  }
+  return { model, location: auth.env.GOOGLE_CLOUD_LOCATION ?? VERTEX_ENV.GOOGLE_CLOUD_LOCATION };
+}
 
+/** Adds Google Search and URL context grounding to the provider's assembled request. */
+function withGrounding(payload: unknown, serviceTier: ServiceTier): unknown {
+  const params = payload as { config?: Record<string, unknown> };
   return {
-    inputTokens,
-    outputTokens,
-    totalTokens,
-    searchQueries: params.searchQueries,
-    tokenUsd,
-    groundingUsd,
-    totalUsd,
-    pricingNote:
-      `Google Search grounding ${params.searchQueries} × $${SEARCH_GROUNDING_USD_PER_1000}/1k queries = ${money(groundingUsd)}; ` +
-      `tokens ${inputTokens} in / ${outputTokens} out at ${params.model} rates` +
-      (params.serviceTier === "flex"
-        ? ` with Flex ${Math.round((1 - FLEX_TOKEN_DISCOUNT) * 100)}% token discount`
-        : " at standard tier") +
-      ` = ${money(tokenUsd)}.`,
+    ...params,
+    config: {
+      ...params.config,
+      tools: [{ googleSearch: {} }, { urlContext: {} }],
+      labels: { app: "pi-vertex-gemini-search", module: "vertex-ai", tier: serviceTier },
+    },
   };
 }
 
-function summaryLine(params: {
-  model: string;
-  region: string;
-  cost: CostEstimate;
-  sourceCount: number;
-  serviceTier: "flex" | "standard";
-}): string {
-  const sourceLabel = `${params.sourceCount} source${params.sourceCount === 1 ? "" : "s"}`;
-  const pricingLabel = params.serviceTier === "flex" ? "flex pricing" : "standard pricing";
-  return (
-    `◆ Gemini Search [` +
-    `${params.model}, ${params.region}, ` +
-    `${money(params.cost.totalUsd)}, ` +
-    `${sourceLabel}, ${pricingLabel}` +
-    `]`
-  );
+function collectGrounding(chunk: unknown, grounding: Grounding): void {
+  const metadata = (chunk as GroundingChunk).candidates?.[0]?.groundingMetadata;
+  for (const query of metadata?.webSearchQueries ?? []) grounding.queries.add(query);
+  for (const source of metadata?.groundingChunks ?? []) if (source.web?.uri) grounding.urls.add(source.web.uri);
 }
 
-function ansi(code: string, text: string): string {
-  return `\x1b[${code}m${text}\x1b[0m`;
+/**
+ * Tool-result usage counts toward the session cost. Pi prices tokens at the
+ * catalog's standard rates, so Flex gets its discount here, and the Google
+ * Search grounding fee, which has no token category, is included in `total`.
+ */
+function searchUsage(usage: Usage, serviceTier: ServiceTier, searchQueries: number): Usage {
+  const discount = serviceTier === "flex" ? FLEX_TOKEN_DISCOUNT : 1;
+  const grounding = (searchQueries * SEARCH_GROUNDING_USD_PER_1000) / 1000;
+  return {
+    ...usage,
+    cost: {
+      input: usage.cost.input * discount,
+      output: usage.cost.output * discount,
+      cacheRead: usage.cost.cacheRead * discount,
+      cacheWrite: usage.cost.cacheWrite * discount,
+      total: usage.cost.total * discount + grounding,
+    },
+  };
+}
+
+async function requestTier(
+  ctx: ExtensionToolContext,
+  model: Model<Api>,
+  depth: Depth,
+  query: string,
+  serviceTier: ServiceTier,
+  signal: AbortSignal,
+  onText: (text: string) => void,
+): Promise<{ message: AssistantMessage; grounding: Grounding }> {
+  const grounding: Grounding = { queries: new Set(), urls: new Set() };
+  const { instruction, maxTokens, timeoutMs } = DEPTHS[depth];
+  const stream = ctx.modelRegistry.streamSimple(
+    model,
+    { systemPrompt: instruction, messages: [{ role: "user", content: query, timestamp: Date.now() }] },
+    {
+      signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs[serviceTier])]),
+      temperature: 0.4,
+      maxTokens,
+      headers: serviceTier === "flex" ? FLEX_HEADERS : undefined,
+      onPayload: (payload) => withGrounding(payload, serviceTier),
+      onProviderStreamEvent: (chunk) => collectGrounding(chunk, grounding),
+    },
+  );
+  let text = "";
+  for await (const event of stream) {
+    if (event.type === "text_delta") {
+      text += event.delta;
+      onText(text);
+    }
+  }
+  return { message: await stream.result(), grounding };
+}
+
+const failed = (message: AssistantMessage) => message.stopReason === "error" || message.stopReason === "aborted";
+
+async function runSearch(
+  query: string,
+  depth: Depth,
+  signal: AbortSignal,
+  ctx: ExtensionToolContext,
+  onText: (text: string) => void,
+) {
+  const { model, location } = await resolveVertex(ctx);
+
+  let serviceTier: ServiceTier = pricingPreference === "flex" && !flexUnavailableForSession ? "flex" : "standard";
+  let result = await requestTier(ctx, model, depth, query, serviceTier, signal, onText);
+  if (serviceTier === "flex" && failed(result.message) && !signal.aborted) {
+    // Flex either is unsupported here or queued until timeout; stop paying that wait each call.
+    flexUnavailableForSession = true;
+    serviceTier = "standard";
+    result = await requestTier(ctx, model, depth, query, serviceTier, signal, onText);
+  }
+
+  const { message, grounding } = result;
+  if (signal.aborted) throw new Error("aborted");
+  if (message.stopReason === "aborted") throw new Error("Vertex AI Gemini request timed out.");
+  if (message.stopReason === "error") {
+    throw new Error(`Vertex AI Gemini API error: ${message.errorMessage ?? "unknown"}`);
+  }
+
+  const answer =
+    message.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n")
+      .trim() || "(no answer returned)";
+
+  // Resolve redirect URLs to pure links in parallel (best-effort, bounded).
+  const resolved = await Promise.all([...grounding.urls].slice(0, MAX_SOURCES).map((u) => resolveUrl(u, signal)));
+  const sources = [...new Set(resolved)].map((url) => ({ host: hostOf(url), url }));
+
+  const searchQueries = [...grounding.queries];
+  const usage = searchUsage(message.usage, serviceTier, Math.max(searchQueries.length, sources.length > 0 ? 1 : 0));
+  const output: SearchOutput = {
+    answer,
+    sources,
+    searchQueries,
+    model: model.id,
+    location,
+    serviceTier,
+    costUsd: usage.cost.total,
+  };
+  const sourceLines = sources.map((s, i) => `${i + 1}. ${s.host ? `${s.host} — ` : ""}${s.url}`);
+  const text = sourceLines.length > 0 ? `${answer}\n\nSources:\n${sourceLines.join("\n")}` : answer;
+
+  return {
+    content: [{ type: "text" as const, text }],
+    details: output,
+    structuredContent: output,
+    usage,
+  };
 }
 
 function osc8(url: string, label: string): string {
   return `\x1b]8;;${url}\x07${label}\x1b]8;;\x07`;
 }
 
-function linkifyUrls(line: string): string {
-  return line.replace(/https?:\/\/[^\s)]+/g, (raw) => {
-    const trailing = raw.match(/[.,;:]$/)?.[0] ?? "";
-    const url = trailing ? raw.slice(0, -1) : raw;
-    return `${osc8(url, ansi("1;4;96", url))}${trailing}`;
-  });
-}
-
-function brutalistLine(line: string): string {
-  if (line.startsWith("◆ Gemini Search [")) {
-    const open = line.indexOf("[");
-    const meta = open >= 0 ? line.slice(open) : "";
-    return `${ansi("1;30;103", " ◆ GEMINI SEARCH ")} ${ansi("1;96", meta)}`;
-  }
-
-  if (line === "Sources:") {
-    return ansi("1;30;106", " SOURCES ");
-  }
-
-  const sourceMatch = line.match(/^(\d+)\.\s+(.+?)\s+[—-]\s+(https?:\/\/\S+)$/);
-  if (sourceMatch) {
-    const [, index, host, url] = sourceMatch;
-    return [ansi("1;33", `${index}.`), ansi("1;95", host), ansi("90", "—"), osc8(url, ansi("1;4;96", url))].join(" ");
-  }
-
-  if (line.trim() === "") return line;
-
-  return ansi("97", linkifyUrls(line));
-}
-
-function renderSearchResult(result: { content?: Array<{ type?: string; text?: string }> }) {
-  const text =
-    result.content
-      ?.filter((part) => part.type === "text")
-      .map((part) => part.text ?? "")
-      .join("\n") ?? "";
-
-  return new Text(text.split("\n").map(brutalistLine).join("\n"), 0, 0);
-}
-
-interface RunOptions {
-  query: string;
-  detail: "short" | "long";
-}
-
-async function runSearch(
-  { query, detail }: RunOptions,
-  signal: AbortSignal,
-  ctx: ExtensionToolContext,
-): Promise<{
-  text: string;
-  model: string;
-  endpoint: string;
-  serviceTier: "flex" | "standard";
-  sources: SourceLink[];
-  sourceCount: number;
-  groundingQueries: string[];
-  cost: CostEstimate;
-}> {
-  const accessToken = await resolveAccessToken(signal);
-
-  const instruction =
-    detail === "long"
-      ? `${SYSTEM_INSTRUCTION}\nThis is a COMPLEX research query. Provide a thorough, well-structured answer covering the key facets of the topic. Organize with short sections or bullet points where helpful. Aim for completeness over brevity.`
-      : `${SYSTEM_INSTRUCTION}\nThis is a QUICK verification query. Answer as concisely as possible — ideally one to three sentences. Only include the essential fact(s) needed to verify or check.`;
-
-  const model = detail === "long" ? GEMINI_MODEL_LONG : GEMINI_MODEL_SHORT;
-  const flexTimeout = detail === "long" ? 160_000 : 60_000;
-  const standardTimeout = detail === "long" ? 260_000 : 60_000;
-
-  const buildBody = (serviceTier: "flex" | "standard") => ({
-    system_instruction: { parts: [{ text: instruction }] },
-    contents: [{ role: "user", parts: [{ text: query }] }],
-    tools: [{ google_search: {} }, { url_context: {} }],
-    labels: {
-      app: "pi-vertex-gemini-search",
-      module: "vertex-ai",
-      tier: serviceTier,
-    },
-    generationConfig: {
-      temperature: 0.4,
-      maxOutputTokens: detail === "long" ? 12000 : 2000,
-    },
-  });
-
-  const doFetch = async (serviceTier: "flex" | "standard", timeoutMs: number): Promise<Response> => {
-    // Combine the user's abort signal with our timeout.
-    const combined = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-    };
-    if (serviceTier === "flex") {
-      headers["X-Vertex-AI-LLM-Shared-Request-Type"] = "flex";
-      headers["X-Vertex-AI-LLM-Request-Type"] = "shared";
-    }
-    return fetch(GEMINI_ENDPOINT(model), {
-      method: "POST",
-      headers,
-      body: JSON.stringify(buildBody(serviceTier)),
-      signal: combined,
-    });
-  };
-
-  /**
-   * Sleep that rejects early if the caller aborts. Keeps retries responsive to
-   * cancellation.
-   */
-  const sleep = (ms: number): Promise<void> =>
-    new Promise((resolve, reject) => {
-      const onAbort = () => {
-        clearTimeout(t);
-        reject(new Error("aborted"));
-      };
-      const t = setTimeout(() => {
-        signal.removeEventListener("abort", onAbort);
-        resolve();
-      }, ms);
-      signal.addEventListener("abort", onAbort, { once: true });
-    });
-
-  /**
-   * Parse a `Retry-After` header (seconds or HTTP-date) into milliseconds.
-   */
-  const parseRetryAfter = (header: string | null): number | undefined => {
-    if (!header) return undefined;
-    const secs = Number(header);
-    if (Number.isFinite(secs)) return secs * 1000;
-    const date = Date.parse(header);
-    if (Number.isFinite(date)) return Math.max(0, date - Date.now());
-    return undefined;
-  };
-
-  /**
-   * Exponential backoff with jitter (Google's recommended strategy for 503).
-   * Honors `Retry-After` when the server provides it.
-   */
-  const backoffDelay = (attempt: number, retryAfterMs?: number): number => {
-    if (retryAfterMs !== undefined) {
-      return Math.min(retryAfterMs, MAX_RETRY_AFTER_MS);
-    }
-    const base = Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS);
-    return base + Math.random() * 500; // jitter to avoid thundering herd
-  };
-
-  /**
-   * Fetch with bounded retries on transient errors (429/5xx) and network
-   * failures. Returns the last response if retries are exhausted (so the
-   * caller can still inspect status / fall back to another tier).
-   */
-  const fetchWithRetry = async (serviceTier: "flex" | "standard", timeoutMs: number): Promise<Response> => {
-    let lastResponse: Response | undefined;
-    let lastError: unknown;
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      if (signal.aborted) throw new Error("aborted");
-      try {
-        const res = await doFetch(serviceTier, timeoutMs);
-        if (res.ok || !RETRYABLE_STATUS.has(res.status)) return res;
-        lastResponse = res;
-        lastError = undefined;
-      } catch (err) {
-        if (signal.aborted) throw err; // user cancelled
-        // A Flex timeout means queued capacity; fall back to standard at once.
-        if (serviceTier === "flex") throw err;
-        lastError = err;
-        lastResponse = undefined;
-      }
-      if (attempt < MAX_RETRIES) {
-        const retryAfterMs = parseRetryAfter(lastResponse?.headers.get("retry-after") ?? null);
-        await sleep(backoffDelay(attempt, retryAfterMs));
-      }
-    }
-    if (lastResponse) return lastResponse;
-    throw lastError;
-  };
-
-  // 1) Try Flex first (50% cheaper, but slow / sheddable) with retries on
-  //    transient errors.
-  // 2) On timeout / network error OR a retryable status that exhausted retries,
-  //    fall back to the standard tier (longer timeout) and retry there too.
-  let response: Response;
-  let usedServiceTier: "flex" | "standard" =
-    pricingPreference === "standard" || flexUnavailableForSession ? "standard" : "flex";
-  if (pricingPreference === "standard" || flexUnavailableForSession) {
-    response = await fetchWithRetry("standard", standardTimeout);
-  } else {
-    try {
-      response = await fetchWithRetry("flex", flexTimeout);
-      usedServiceTier = "flex";
-    } catch (err) {
-      if (signal.aborted) throw err; // user cancelled - don't retry
-      response = await fetchWithRetry("standard", standardTimeout);
-      usedServiceTier = "standard";
-    }
-  }
-
-  // Flex can still return a retryable error after exhausting its retries
-  // (common — the Flex tier sheds load aggressively). Give standard a turn.
-  if (!response.ok && RETRYABLE_STATUS.has(response.status)) {
-    response = await fetchWithRetry("standard", standardTimeout);
-    usedServiceTier = "standard";
-  }
-
-  // Some Vertex projects/regions don't support Flex. In that case Vertex returns
-  // a non-retryable 400, but the same request is valid at the standard tier.
-  if (!response.ok && usedServiceTier === "flex" && response.status === 400) {
-    flexUnavailableForSession = true;
-    response = await fetchWithRetry("standard", standardTimeout);
-    usedServiceTier = "standard";
-  }
-
-  if (response.status === 401) {
-    // A revoked or rotated login: drop the cached token so the next call refreshes it.
-    cachedToken = undefined;
-  }
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`Vertex AI Gemini API error (${response.status}): ${errText}`);
-  }
-
-  const data = (await response.json()) as GeminiResponse;
-
-  if (data.error) {
-    throw new Error(`Vertex AI Gemini API error: ${data.error.message ?? "unknown"}`);
-  }
-
-  const candidate = data.candidates?.[0];
-  const answer =
-    candidate?.content?.parts
-      ?.filter((p) => !p.thought)
-      .map((p) => p.text ?? "")
-      .join("\n")
-      .trim() || "(no answer returned)";
-
-  const chunks = candidate?.groundingMetadata?.groundingChunks ?? [];
-  const rawUrls = chunks
-    .map((c) => c.web?.uri)
-    .filter((u): u is string => !!u)
-    .slice(0, MAX_SOURCES);
-
-  // Resolve redirect URLs to pure links in parallel (best-effort, bounded).
-  const resolved = await Promise.all(rawUrls.map((u) => resolveUrl(u, signal)));
-
-  const seen = new Set<string>();
-  const sources: SourceLink[] = [];
-  for (const u of resolved) {
-    if (seen.has(u)) continue;
-    seen.add(u);
-    sources.push({
-      index: sources.length + 1,
-      host: hostOf(u),
-      url: u,
-    });
-  }
-
-  const groundingQueries = candidate?.groundingMetadata?.webSearchQueries ?? [];
-  const searchQueries = Math.max(groundingQueries.length, sources.length > 0 ? 1 : 0);
-  const cost = estimateCost({
-    model,
-    pricing: modelPricingUsdPerMillion(ctx, model),
-    serviceTier: usedServiceTier,
-    usage: data.usageMetadata,
-    searchQueries,
-  });
-  const provenance = summaryLine({
-    model,
-    region: VERTEX_REGION,
-    cost,
-    sourceCount: sources.length,
-    serviceTier: usedServiceTier,
-  });
-  const sourceLines = sources.map((s) => `${s.index}. ${s.host ? `${s.host} — ` : ""}${s.url}`);
-  const text =
-    sourceLines.length > 0
-      ? `${provenance}\n\n${answer}\n\nSources:\n${sourceLines.join("\n")}`
-      : `${provenance}\n\n${answer}`;
-
-  return {
-    text,
-    model,
-    endpoint: GEMINI_ENDPOINT(model),
-    serviceTier: usedServiceTier,
-    sources,
-    sourceCount: sources.length,
-    groundingQueries,
-    cost,
-  };
-}
-
-function errorResult(message: string) {
-  return {
-    content: [{ type: "text" as const, text: message }],
-    details: {},
-    isError: true,
-  };
-}
-
-async function executeSearch(
-  query: string,
-  detail: "short" | "long",
-  signal: AbortSignal | undefined,
-  ctx: ExtensionToolContext,
+function renderSearchResult(
+  result: { content: Array<{ type: string; text?: string }>; details?: unknown },
+  options: { expanded: boolean; isPartial: boolean },
+  theme: Theme,
+  context: { isError: boolean },
 ) {
-  try {
-    const result = await runSearch({ query, detail }, signal ?? new AbortController().signal, ctx);
-    return {
-      content: [{ type: "text" as const, text: result.text }],
-      details: {
-        model: result.model,
-        endpoint: result.endpoint,
-        region: VERTEX_REGION,
-        serviceTier: result.serviceTier,
-        depth: detail,
-        sourceCount: result.sourceCount,
-        sources: result.sources,
-        groundingQueries: result.groundingQueries,
-        cost: result.cost,
-      },
-    };
-  } catch (err) {
-    return errorResult(err instanceof Error ? err.message : String(err));
+  const text = result.content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text ?? "")
+    .join("\n");
+
+  if (options.isPartial) {
+    const preview = text.trim().split("\n").slice(-COLLAPSED_ANSWER_LINES).join("\n");
+    return new Text(
+      [theme.fg("warning", "Searching the web…"), preview && theme.fg("dim", preview)].filter(Boolean).join("\n"),
+      0,
+      0,
+    );
   }
+
+  const output = result.details as Partial<SearchOutput> | undefined;
+  // Errors, and results recorded by earlier versions, have no structured details.
+  if (context.isError || typeof output?.answer !== "string") {
+    return new Text(context.isError ? theme.fg("error", text) : text, 0, 0);
+  }
+
+  const sources = output.sources ?? [];
+  const tier = output.serviceTier === "flex" ? "flex pricing" : "standard pricing";
+  const meta = [
+    output.model,
+    output.location,
+    money(output.costUsd ?? 0),
+    `${sources.length} source${sources.length === 1 ? "" : "s"}`,
+    tier,
+  ].join(" · ");
+  const view = new Container();
+  view.addChild(new Text(`${theme.fg("accent", theme.bold("◆ Gemini Search"))} ${theme.fg("dim", meta)}`, 0, 0));
+  view.addChild(new Spacer(1));
+
+  if (!options.expanded) {
+    // Preview prose lines, not the blank lines and rules between sections.
+    const lines = output.answer.split("\n").filter((line) => line.trim() && !/^\s*([-*_])\1{2,}\s*$/.test(line));
+    view.addChild(new Markdown(lines.slice(0, COLLAPSED_ANSWER_LINES).join("\n"), 0, 0, getMarkdownTheme()));
+    if (lines.length > COLLAPSED_ANSWER_LINES || sources.length > 0) {
+      view.addChild(
+        new Text(`${theme.fg("dim", "…")} ${keyHint("app.tools.expand", "to show the full answer and sources")}`, 0, 0),
+      );
+    }
+    return view;
+  }
+
+  view.addChild(new Markdown(output.answer, 0, 0, getMarkdownTheme()));
+  if (sources.length > 0) {
+    const lines = sources.map(
+      (source, index) =>
+        `${theme.fg("dim", `${index + 1}.`)} ${theme.fg("muted", source.host)} ${osc8(source.url, theme.fg("mdLink", source.url))}`,
+    );
+    view.addChild(new Spacer(1));
+    view.addChild(new Text([theme.fg("accent", theme.bold("Sources")), ...lines].join("\n"), 0, 0));
+  }
+  return view;
+}
+
+const SEARCH_ANNOTATIONS = { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true };
+
+function searchTool(depth: Depth) {
+  return {
+    outputSchema: SearchOutput,
+    annotations: SEARCH_ANNOTATIONS,
+    parameters: Type.Object({
+      query: Type.String({
+        description:
+          depth === "short"
+            ? "The specific fact or question to verify on the web."
+            : "The complex topic or research question to investigate on the web.",
+      }),
+    }),
+    execute: (
+      _toolCallId: string,
+      params: { query: string },
+      signal: AbortSignal | undefined,
+      onUpdate: ((partial: { content: Array<{ type: "text"; text: string }>; details: undefined }) => void) | undefined,
+      ctx: ExtensionToolContext,
+    ) =>
+      runSearch(params.query, depth, signal ?? new AbortController().signal, ctx, (text) =>
+        onUpdate?.({ content: [{ type: "text", text }], details: undefined }),
+      ),
+    renderResult: renderSearchResult,
+  };
 }
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("search-pricing", {
     description: "Show or set the Vertex Gemini Search pricing tier: flex or standard.",
+    getArgumentCompletions: (prefix) =>
+      ["standard", "flex", "status"]
+        .filter((value) => value.startsWith(prefix))
+        .map((value) => ({ value, label: value })),
     handler: async (args, ctx) => {
       const choice = args.trim().toLowerCase();
       if (choice === "flex") {
@@ -606,7 +403,7 @@ export default function (pi: ExtensionAPI) {
       if (choice === "" || choice === "status") {
         const availability =
           pricingPreference === "flex" && flexUnavailableForSession
-            ? "Flex is unavailable for this session; searches currently use standard."
+            ? "Flex failed earlier in this session; searches currently use standard."
             : `Gemini Search pricing preference: ${pricingPreference}.`;
         ctx.ui.notify(`${availability} Use /search-pricing flex or /search-pricing standard.`, "info");
         return;
@@ -624,13 +421,8 @@ export default function (pi: ExtensionAPI) {
       "It searches the web + reads any URLs you pass, then returns ONLY a concise synthesized answer + source URLs — no raw page dumps, no irrelevant content noise, so your context stays lean. " +
       "Input is context-rich: include background, the claim to verify, URLs to cross-check; more context = better answer. " +
       "Use for version numbers, dates, single facts, or a quick second opinion. For complex topics use web_research.",
-    parameters: Type.Object({
-      query: Type.String({
-        description: "The specific fact or question to verify on the web.",
-      }),
-    }),
-    execute: (_toolCallId, params, signal, _onUpdate, ctx) => executeSearch(params.query, "short", signal, ctx),
-    renderResult: renderSearchResult,
+    promptSnippet: "Quick grounded web fact-check with source URLs",
+    ...searchTool("short"),
   });
 
   // In-depth research on a complex topic.
@@ -642,12 +434,7 @@ export default function (pi: ExtensionAPI) {
       "It searches the web + reads any URLs you pass, then returns ONLY a synthesized, structured answer + source URLs — no raw page dumps, no irrelevant content noise, so your context stays lean. " +
       "Input is context-rich: include background, constraints, prior conclusions, docs URLs to read; more context = better answer. " +
       "Use for multi-faceted topics, how-tos, architecture opinions. For quick checks use web_search.",
-    parameters: Type.Object({
-      query: Type.String({
-        description: "The complex topic or research question to investigate on the web.",
-      }),
-    }),
-    execute: (_toolCallId, params, signal, _onUpdate, ctx) => executeSearch(params.query, "long", signal, ctx),
-    renderResult: renderSearchResult,
+    promptSnippet: "In-depth grounded web research with source URLs",
+    ...searchTool("long"),
   });
 }
