@@ -4,7 +4,6 @@
   "defaultTools": ["+codemode", "+find", "+grep", "+ls"],
   "npmCommand": ["bun"],
   "packages": [
-    "npm:pi-web-access",
     {
       "source": "npm:pi-subagents",
       "skills": [],
