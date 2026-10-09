@@ -4,8 +4,8 @@
   "app.exit": [],
   "app.suspend": "ctrl+z",
   "app.thinking.cycle": "shift+tab",
-  "app.model.cycleForward": "ctrl+p",
-  "app.model.cycleBackward": "ctrl+shift+p",
+  "app.model.cycleForward": [],
+  "app.model.cycleBackward": [],
   "app.model.select": "ctrl+l",
   "app.tools.expand": "ctrl+o",
   "app.thinking.toggle": "ctrl+t",
@@ -30,6 +30,6 @@
   "tui.select.confirm": "enter",
   "tui.select.cancel": "escape",
   "extension.resumeInterrupted": "alt+p",
-  "extension.historyPrevious": "ctrl+up",
-  "extension.historyNext": "ctrl+down"
+  "extension.historyPrevious": "ctrl+p",
+  "extension.historyNext": "ctrl+n"
 }

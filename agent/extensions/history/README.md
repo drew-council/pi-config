@@ -18,11 +18,16 @@ messages without rewriting entries.
 
 ## Keys
 
-`ctrl+up` and `ctrl+down` by default, overridable through
+`ctrl+p` and `ctrl+n` by default, overridable through
 `extension.historyPrevious` and `extension.historyNext` in
 `agent/keybindings.json`. Previous walks toward older entries, next walks back,
 and stepping past the newest restores the draft that was in the buffer when
 browsing began. Editing the buffer mid-browse makes that text the new draft.
+
+`ctrl+p`/`ctrl+n` (readline convention) are used instead of arrow chords such as
+`ctrl+up`/`ctrl+down` because macOS intercepts the latter for Mission Control
+and App Exposé, so they never reach the terminal. They are also plain ASCII
+control bytes, so they work in every terminal without Option-as-Meta setup.
 
 Leave `tui.editor.historyPrevious` and `tui.editor.historyNext` unbound on
 those chords. The editor's own per-session history would otherwise compete for

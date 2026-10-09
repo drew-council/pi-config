@@ -5,8 +5,8 @@ import { configuredShortcut } from "../shared/configured-shortcuts.js";
 import { type HistoryDirection, HistoryNavigator } from "./navigator.js";
 import { PromptHistoryStore } from "./store.js";
 
-const PREVIOUS_KEY: KeyId = configuredShortcut("extension.historyPrevious") ?? "ctrl+up";
-const NEXT_KEY: KeyId = configuredShortcut("extension.historyNext") ?? "ctrl+down";
+const PREVIOUS_KEY: KeyId = configuredShortcut("extension.historyPrevious") ?? "ctrl+p";
+const NEXT_KEY: KeyId = configuredShortcut("extension.historyNext") ?? "ctrl+n";
 
 export default function promptHistoryExtension(pi: ExtensionAPI): void {
   const store = new PromptHistoryStore(path.join(getAgentDir(), "prompt-history.json"));
