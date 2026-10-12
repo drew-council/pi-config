@@ -12,9 +12,9 @@ PI_PII_MODE=1 pi
 ```
 
 There is no way to turn it off. Exit pi to leave it, which also discards the
-in-memory transcript. Before it is entered, `/pii` asks for confirmation, waits
-for the agent to go idle, and starts a fresh session. The previous session file
-is left as it is and holds only what was said before.
+in-memory transcript. `/pii` waits for the agent to go idle and starts a fresh
+session, without asking for confirmation. The previous session file is left as
+it is and holds only what was said before.
 
 ## What it does
 

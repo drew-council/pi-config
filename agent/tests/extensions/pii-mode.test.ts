@@ -189,7 +189,7 @@ test("stale scratch directories of dead processes are removed", () => {
 });
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
-function harness(options: { conversation?: boolean; flag?: boolean; confirm?: boolean; cancel?: boolean } = {}) {
+function harness(options: { conversation?: boolean; flag?: boolean; cancel?: boolean } = {}) {
   const directory = scratch();
   const handlers = new Map<string, Handler>();
   const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>();
@@ -211,7 +211,9 @@ function harness(options: { conversation?: boolean; flag?: boolean; confirm?: bo
     ui: {
       notify: (message: string) => notices.push(message),
       setStatus: (key: string, text: string | undefined) => statuses.set(key, text),
-      confirm: async () => options.confirm ?? true,
+      confirm: async () => {
+        throw new Error("/pii must not ask for confirmation");
+      },
     },
     shutdown: () => {
       shutdowns += 1;
@@ -280,10 +282,6 @@ test("a cancelled /pii leaves nothing behind", async () => {
   expect(piiState().scratchDir).toBeUndefined();
   expect(process.env.TMPDIR).toBe(savedTmpDir);
   expect(h.notices.at(-1)).toContain("was not entered");
-
-  const declined = harness({ confirm: false });
-  await declined.run("pii");
-  expect(process.env[PII_ENV]).toBeUndefined();
 });
 
 test("--pii refuses to continue a saved conversation", async () => {

@@ -138,15 +138,6 @@ export function registerPiiMode(pi: ExtensionAPI, options: { agentDir: string })
         ctx.ui.notify(`PII-safe mode is unavailable: ${problem}`, "error");
         return;
       }
-      if (
-        ctx.hasUI &&
-        !(await ctx.ui.confirm(
-          "Enter PII-safe mode?",
-          "This starts a fresh session that is kept only in memory, and limits models and tools for the rest of this pi process. It cannot be turned off: exit pi to leave it. The current session is left as it is.",
-        ))
-      ) {
-        return;
-      }
       await ctx.waitForIdle();
       const undo = activate();
       try {
