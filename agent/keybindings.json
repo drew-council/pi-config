@@ -19,6 +19,7 @@
   "tui.input.tab": "tab",
   "app.tree.foldOrUp": "ctrl+left",
   "app.tree.unfoldOrDown": "ctrl+right",
+  "app.models.toggleProvider": "ctrl+shift+p",
   "app.models.reorderUp": "ctrl+shift+up",
   "app.models.reorderDown": "ctrl+shift+down",
   "tui.altScreen.previousPrompt": "ctrl+shift+pageUp",
