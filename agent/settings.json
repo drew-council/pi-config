@@ -4,11 +4,6 @@
   "defaultTools": ["+codemode", "+find", "+grep", "+ls"],
   "npmCommand": ["bun"],
   "packages": [
-    {
-      "source": "npm:pi-subagents",
-      "skills": [],
-      "prompts": []
-    },
     "npm:@bizmyth/pi-review",
     "npm:@bizmyth/pi-git-conflicts",
     "npm:@bizmyth/pi-neovim-editor",

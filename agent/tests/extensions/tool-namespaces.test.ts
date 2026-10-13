@@ -119,7 +119,8 @@ test("browser metadata is conservative about report writes and preserves direct 
 });
 
 test("installed subagent orchestration registrations retain model-only helper metadata", async () => {
-  const packageRoot = `${import.meta.dir}/../../npm/node_modules/pi-subagents`;
+  // pi-sheer depends on pi-subagents and loads it behind /subagents-toggle.
+  const packageRoot = `${import.meta.dir}/../../git/github.com/sheerhealth/pi-sheer/node_modules/pi-subagents`;
   const helper = await import(`${packageRoot}/src/shared/extension-context.js`);
   assert.equal(helper.MODEL_ONLY_TOOL.exposure, "model-only");
   for (const name of [
