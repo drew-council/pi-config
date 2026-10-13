@@ -297,7 +297,7 @@ def main [
   ^nu ($repo | path join "scripts" "patch-git-packages.nu")
 
   say "Initializing account profiles (browser logins remain available through /log-me-in)"
-  ^bun --tsconfig-override ($repo | path join "tsconfig.runtime.json") ($agent_dir | path join "scripts" "setup-accounts.ts")
+  ^bun ($agent_dir | path join "scripts" "setup-accounts.ts")
 
   if not $skip_pi_list {
     say "Verifying Pi package resolution"

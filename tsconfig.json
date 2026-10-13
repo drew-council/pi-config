@@ -10,13 +10,13 @@
     "skipLibCheck": true,
     "typeRoots": ["./bun/node_modules/@types"],
     "types": ["node", "bun"],
+    // Package directories, not entry files: tsc then reads each package's types and bun its
+    // runtime entry, so type checks and tests share this config.
     "paths": {
-      "@earendil-works/pi-coding-agent": [
-        "./bun/typecheck/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
-      ],
-      "@earendil-works/pi-ai": ["./bun/typecheck/node_modules/@earendil-works/pi-ai/dist/index.d.ts"],
-      "@earendil-works/pi-tui": ["./bun/typecheck/node_modules/@earendil-works/pi-tui/dist/index.d.ts"],
-      "typebox": ["./bun/typecheck/node_modules/typebox/build/index.d.mts"]
+      "@earendil-works/pi-coding-agent": ["./bun/typecheck/node_modules/@earendil-works/pi-coding-agent"],
+      "@earendil-works/pi-ai": ["./bun/typecheck/node_modules/@earendil-works/pi-ai"],
+      "@earendil-works/pi-tui": ["./bun/typecheck/node_modules/@earendil-works/pi-tui"],
+      "typebox": ["./bun/typecheck/node_modules/typebox"]
     }
   },
   "include": ["**/*.ts"],

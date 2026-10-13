@@ -47,6 +47,5 @@ def main [] {
   ^$tsc -p ($repo | path join "tsconfig.json")
 
   say "Running Bun unit tests"
-  # Runtime imports must resolve executable JS, not tsc's declaration-only paths.
-  ^bun test --tsconfig-override ./tsconfig.runtime.json ./agent/tests
+  ^bun test ./agent/tests
 }
