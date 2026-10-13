@@ -31,7 +31,9 @@ def main [] {
   let typecheck_pi_version = (open $typecheck_pi_package | get version)
   assert equal $active_pi_version $typecheck_pi_version $"Active pi version (($active_pi_version)) does not match installed type-check package version (($typecheck_pi_version)). Run ./scripts/install.nu to synchronize it."
 
-  let ts_files = (glob "**/*.ts" --exclude ["bun/**" ".git/**" ".pi/**" "agent/git/**" "agent/sessions/**"] | sort)
+  # Installed packages (agent/npm/node_modules and others) are not ours to check, and passing
+  # their thousands of files as arguments overflows Biome's launcher.
+  let ts_files = (glob "**/*.ts" --exclude ["**/node_modules/**" "bun/**" ".git/**" ".pi/**" "agent/git/**" "agent/sessions/**"] | sort)
 
   if ($ts_files | is-empty) {
     say "No TypeScript files found."

@@ -9,13 +9,11 @@
       "skills": [],
       "prompts": []
     },
-    "npm:pi-multi-skills",
-    "npm:@bizmyth/pi-vertex-gemini-search",
     "npm:@bizmyth/pi-review",
     "npm:@bizmyth/pi-git-conflicts",
     "npm:@bizmyth/pi-neovim-editor",
-    "npm:@bizmyth/pi-address-review-comments",
-    "git:github.com/elidickinson/pi-claude-bridge"
+    "git:github.com/elidickinson/pi-claude-bridge",
+    "git:git@github.com:sheerhealth/pi-sheer"
   ],
   "theme": "catppuccin-mocha",
   "hideThinkingBlock": true,

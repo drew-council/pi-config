@@ -17,7 +17,7 @@ export default function promptHistoryExtension(pi: ExtensionAPI): void {
   });
 
   // Replayed messages do not raise this event, so resuming a session never rewrites entries.
-  // Prompts typed in PII-safe mode (see pii-mode) must not reach the shared file.
+  // Prompts typed in PII-safe mode (pi-sheer's pii-mode) must not reach the shared file.
   pi.on("input", (event) => {
     if (event.source !== "interactive" || process.env.PI_PII_MODE === "1") return;
     const entries = store.add(event.text);
