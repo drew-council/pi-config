@@ -48,6 +48,8 @@ def main [] {
 
     # A patch may change package.json dependencies; refresh the install so the
     # runtime matches. Pi installs git packages with Bun (settings.npmCommand).
-    ^bun install --cwd $dir
+    if (($dir | path join "package.json") | path exists) {
+      ^bun install --cwd $dir
+    }
   }
 }

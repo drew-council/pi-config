@@ -8,7 +8,11 @@
     "npm:@bizmyth/pi-git-conflicts",
     "npm:@bizmyth/pi-neovim-editor",
     "git:github.com/elidickinson/pi-claude-bridge",
-    "git:git@github.com:sheerhealth/pi-sheer"
+    "git:git@github.com:sheerhealth/pi-sheer",
+    {
+      "source": "git:github.com/anthropics/skills",
+      "skills": ["skills/frontend-design/SKILL.md"]
+    }
   ],
   "theme": "catppuccin-mocha",
   "hideThinkingBlock": true,
