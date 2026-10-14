@@ -8,6 +8,7 @@ const blacklistOnly = <T extends { provider: string; id: string; name?: string }
 test("model blacklist removes requested families and version ranges", () => {
   const models = [
     { provider: "google", id: "gemini-3-flash" },
+    { provider: "google", id: "gemini-3.7-flash" },
     { provider: "google", id: "gemma-4-31b-it" },
     { provider: "google", id: "deep-research-preview" },
     { provider: "grok-cli", id: "grok-4.3" },
@@ -20,6 +21,20 @@ test("model blacklist removes requested families and version ranges", () => {
   assert.deepEqual(
     blacklistOnly(models).map((model) => model.id),
     ["grok-4.5", "grok-composer-2.5-fast", "gpt-5.6-luna"],
+  );
+});
+
+test("model blacklist allows gemini 3.8/3.9 and any major version 4 or newer", () => {
+  const models = [
+    { provider: "google-vertex", id: "gemini-3.8-flash" },
+    { provider: "google-vertex", id: "gemini-4-argon" },
+    { provider: "google-vertex", id: "gemini-4.1-flash" },
+    { provider: "google-vertex", id: "gemini-5-argon" },
+  ];
+
+  assert.deepEqual(
+    blacklistOnly(models).map((model) => model.id),
+    models.map((model) => model.id),
   );
 });
 

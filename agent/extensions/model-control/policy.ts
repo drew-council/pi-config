@@ -4,7 +4,8 @@ import { type ProfileName, providerAllowed } from "../shared/accounts.js";
 
 /** Models matching any expression are unavailable everywhere, not merely hidden from the picker. */
 export const MODEL_BLACKLIST = [
-  /gemini-(?!(?:3\.[89]|[4-9]\.\d))/i,
+  // Allows 3.8/3.9 plus any major version 4+ (e.g. `gemini-4-argon`, `gemini-5-argon`).
+  /gemini-(?!(?:3\.[89]|[4-9](?:\.\d+)?)(?:$|-))/i,
   /^gemma-/i,
   /^deep-research-/i,
   /^grok-(?:[0-3](?:\.\d+)?|4(?:\.[0-4])?(?:$|-))/i,
