@@ -3,7 +3,7 @@
 use std/assert
 use utils.nu *
 
-# Format/lint, type-check, and test the TypeScript in this repo.
+# Lint, format, type-check, and test the TypeScript in this repo.
 # Run from anywhere with:
 #   ./scripts/check.nu
 
@@ -13,10 +13,11 @@ def main [] {
 
   let bun_dir = ($repo | path join "bun")
   let typecheck_dir = ($bun_dir | path join "typecheck" "node_modules")
-  let biome = ($bun_dir | path join "node_modules" ".bin" "biome")
   let tsc = ($bun_dir | path join "node_modules" ".bin" "tsc")
 
-  assert ($biome | path exists) $"Missing Biome binary: ($biome). Run ./scripts/install.nu first."
+  for cmd in [oxlint oxfmt] {
+    assert (which $cmd | is-not-empty) $"Missing ($cmd). Enter the flake devShell (direnv) first."
+  }
   assert ($tsc | path exists) $"Missing tsc binary: ($tsc). Run ./scripts/install.nu first."
 
   let typecheck_pi_package = (pi-typecheck-package-path $repo)
@@ -31,17 +32,13 @@ def main [] {
   let typecheck_pi_version = (open $typecheck_pi_package | get version)
   assert equal $active_pi_version $typecheck_pi_version $"Active pi version (($active_pi_version)) does not match installed type-check package version (($typecheck_pi_version)). Run ./scripts/install.nu to synchronize it."
 
-  # Installed packages (agent/npm/node_modules and others) are not ours to check, and passing
-  # their thousands of files as arguments overflows Biome's launcher.
-  let ts_files = (glob "**/*.ts" --exclude ["**/node_modules/**" "bun/**" ".git/**" ".pi/**" "agent/git/**" "agent/sessions/**"] | sort)
+  # Ignores live in oxlint.config.ts and oxfmt.config.ts; both also skip gitignored and
+  # node_modules paths.
+  say "Running oxlint with fixes"
+  ^oxlint --fix --deny-warnings
 
-  if ($ts_files | is-empty) {
-    say "No TypeScript files found."
-    return
-  }
-
-  say "Running Biome with unsafe fixes"
-  ^$biome check --write --unsafe ...$ts_files
+  say "Running oxfmt"
+  ^oxfmt
 
   say "Running tsc (TypeScript 7)"
   ^$tsc -p ($repo | path join "tsconfig.json")

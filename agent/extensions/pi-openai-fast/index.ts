@@ -278,7 +278,7 @@ export default function piOpenAIFast(pi: ExtensionAPI): void {
     if (!config.persistState) {
       return;
     }
-    const nextConfig = { ...(readConfigFile(config.configPath) ?? {}), active: state.active };
+    const nextConfig = { ...readConfigFile(config.configPath), active: state.active };
     writeConfigFile(config.configPath, nextConfig);
   }
 

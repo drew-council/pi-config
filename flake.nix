@@ -45,13 +45,14 @@
         {
           default = pkgs.mkShell {
             packages = with pkgs; [
-              biome
               bun
               ffmpeg
               gh
               git
               imagemagick
               nushell
+              oxfmt
+              oxlint
               uv
             ];
           };

@@ -1,20 +1,23 @@
-{ ... }:
+{ pkgs, ... }:
 {
   projectRootFile = "flake.nix";
 
   programs = {
-    biome = {
+    # Options and ignores live in oxfmt.config.ts, shared with ./scripts/check.nu.
+    oxfmt = {
       enable = true;
-      formatCommand = "format";
-      settings = {
-        formatter = {
-          enabled = true;
-          indentStyle = "space";
-          indentWidth = 2;
-          lineWidth = 120;
-        };
-        javascript.formatter.quoteStyle = "double";
-      };
+      includes = [
+        "*.cjs"
+        "*.js"
+        "*.json"
+        "*.jsonc"
+        "*.mjs"
+        "*.ts"
+      ];
+      excludes = [
+        "agent/extensions/herdr-agent-state.ts"
+        "agent/settings.json"
+      ];
     };
     dos2unix.enable = true;
     nixfmt.enable = true;
@@ -32,5 +35,12 @@
         quote_style = "AutoPreferDouble";
       };
     };
+  };
+
+  # pi rewrites this file itself; see ./scripts/format-pi-settings.ts.
+  settings.formatter.pi-settings = {
+    command = "${pkgs.bun}/bin/bun";
+    options = [ "${./scripts/format-pi-settings.ts}" ];
+    includes = [ "agent/settings.json" ];
   };
 }

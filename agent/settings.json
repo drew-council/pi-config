@@ -1,8 +1,15 @@
 {
   "lastChangelogVersion": "1.2.0",
   "extensions": [],
-  "defaultTools": ["+codemode", "+find", "+grep", "+ls"],
-  "npmCommand": ["bun"],
+  "defaultTools": [
+    "+codemode",
+    "+find",
+    "+grep",
+    "+ls"
+  ],
+  "npmCommand": [
+    "bun"
+  ],
   "packages": [
     "npm:@bizmyth/pi-review",
     "npm:@bizmyth/pi-git-conflicts",
@@ -11,7 +18,9 @@
     "git:git@github.com:sheerhealth/pi-sheer",
     {
       "source": "git:github.com/anthropics/skills",
-      "skills": ["skills/frontend-design/SKILL.md"]
+      "skills": [
+        "skills/frontend-design/SKILL.md"
+      ]
     }
   ],
   "theme": "catppuccin-mocha",

@@ -1,8 +1,8 @@
 # TypeScript checks and formatting
 
-This repo uses `biome` for TypeScript linting/formatting and `tsc` for type checking.
+This repo uses `oxlint` for linting, `oxfmt` for formatting, and `tsc` for type checking.
 
-Run `./scripts/check.nu` after TypeScript changes. It runs Biome with unsafe fixes, then `tsc` over the repo's TypeScript files.
+Run `./scripts/check.nu` after TypeScript changes. It runs oxlint with fixes, oxfmt, `tsc`, then the Bun unit tests.
 
 # Guidance
 
