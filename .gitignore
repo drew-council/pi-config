@@ -7,6 +7,7 @@ agent/auth.pre-profiles.json
 agent/auth-profiles.json
 agent/auth-profiles/
 secrets/*.json
+secrets/work-drive/
 # session logs
 agent/sessions/
 agent/plans/
@@ -41,3 +42,4 @@ agent/local-settings.json
 agent/models-store.json
 
 /agent/pi-subagents/last-seen-version.json
+/agent/mcp-auth.json
