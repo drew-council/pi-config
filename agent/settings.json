@@ -25,5 +25,6 @@
   ],
   "theme": "catppuccin-mocha",
   "hideThinkingBlock": true,
-  "tuiMode": "fullscreen"
+  "tuiMode": "fullscreen",
+  "deviceId": "4a934e53-e1a2-4648-9489-8f4b593e9cba"
 }
