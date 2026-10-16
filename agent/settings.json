@@ -11,9 +11,9 @@
     "bun"
   ],
   "packages": [
-    "npm:@bizmyth/pi-review",
-    "npm:@bizmyth/pi-git-conflicts",
-    "npm:@bizmyth/pi-neovim-editor",
+    "git:github.com/drew-council/pi-review",
+    "git:github.com/drew-council/pi-git-conflicts",
+    "git:github.com/drew-council/pi-neovim-editor",
     "git:github.com/elidickinson/pi-claude-bridge",
     "git:git@github.com:sheerhealth/pi-sheer"
   ],
