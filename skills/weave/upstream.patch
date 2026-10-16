@@ -1,0 +1,35 @@
+diff --git a/SKILL.md b/SKILL.md
+index 9aab1d4..6158252 100644
+--- a/SKILL.md
++++ b/SKILL.md
+@@ -6,25 +6,11 @@ functions in the same file never conflict.
+ 
+ ## Setup
+ 
+-```bash
+-weave setup            # this repo: registers weave as the merge driver + .gitattributes
+-weave setup --global   # every repo on this machine, no per-repo step
+-weave setup --local    # this repo only, writes .git/info/attributes instead
+-```
+-
+-`weave setup` auto-detects the `weave-driver` binary, writes
+-`merge.weave.driver` to git config, and adds `*.ts merge=weave` (etc.) for
+-every supported extension. The equivalent by hand, if you need it:
+-
+-```bash
+-git config merge.weave.name "Entity-level semantic merge"
+-git config merge.weave.driver "weave-driver %O %A %B %L %P"
+-echo '*.py merge=weave' >> .gitattributes   # repeat per extension you want covered
+-```
+-
+-After setup, `git merge` / `git rebase` / `git cherry-pick` all route through
+-weave automatically. No new commands to run to get a merge — only to resolve
+-one that still conflicts.
++Already done: weave is installed and registered as the global git merge
++driver for every supported extension. Do not run `weave setup` or edit git
++config or `.gitattributes` for it. `git merge` / `git rebase` /
++`git cherry-pick` route through weave automatically; you only need weave
++commands to resolve a conflict that remains.
+ 
+ ## The resolve loop
+ 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -98,12 +98,17 @@ test("sync generates per-consumer skills from local, command, and git sources", 
       "---\nname: remote\ndescription: Remote.\n---\n\nRemote body.\n",
     );
     await write(join(upstreamRepo, "skills", "remote", "references", "guide.md"), "Guide {{skillDir}}\n");
+    await write(join(upstreamRepo, "SKILL.md"), "Root body.\n");
     git(upstreamRepo, "init", "-q");
     git(upstreamRepo, "add", ".");
     git(upstreamRepo, "commit", "-qm", "init");
     await write(
       join(sourceDir, "remote", "SKILL.md"),
       `---\nname: remote\nsource:\n  git: ${upstreamRepo}\n  path: skills/remote\n---\n`,
+    );
+    await write(
+      join(sourceDir, "root-file", "SKILL.md"),
+      `---\ndescription: Root file.\ntargets: [pi]\nsource:\n  git: ${upstreamRepo}\n  path: SKILL.md\n---\n`,
     );
 
     const result = await syncSkills({ sourceDir, home, cacheDir: join(root, "cache") });
@@ -114,6 +119,7 @@ test("sync generates per-consumer skills from local, command, and git sources", 
       "pi/from-command",
       "pi/local-tool",
       "pi/remote",
+      "pi/root-file",
     ]);
 
     const piLocal = await readFile(join(home, ".pi/agent/skills/local-tool/SKILL.md"), "utf8");
@@ -154,6 +160,10 @@ test("sync generates per-consumer skills from local, command, and git sources", 
       "Guide {{skillDir}}\n",
     );
     assert.match(await readFile(join(home, ".codex/skills/remote/SKILL.md"), "utf8"), /Remote body\./);
+
+    // A file path takes only that file, not the rest of the repository.
+    assert.deepEqual((await readdir(join(home, ".pi/agent/skills/root-file"))).sort(), [MARKER_FILE, "SKILL.md"]);
+    assert.match(await readFile(join(home, ".pi/agent/skills/root-file/SKILL.md"), "utf8"), /Root body\./);
   });
 });
 

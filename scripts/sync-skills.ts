@@ -10,7 +10,7 @@
  *   source:                        # optional; exactly one of `command` or `git`
  *     command: herdr --skill       # stdout is a SKILL.md
  *     git: https://github.com/github/gh-stack
- *     path: skills/gh-stack        # directory containing SKILL.md (default: repository root)
+ *     path: skills/gh-stack        # directory containing SKILL.md, or a lone skill file (default: repository root)
  *     ref: main                    # branch, tag, or commit (default: remote HEAD)
  *
  * With a source, the upstream skill directory is materialized (for `command`, stdout becomes its
@@ -259,10 +259,15 @@ async function materializeUpstream(dir: string, source: Source, workDir: string,
   } else {
     const checkout = await git.checkout(source.git, source.ref);
     const from = resolve(checkout, source.path ?? ".");
-    if (!(await exists(join(from, "SKILL.md")))) {
+    if ((await stat(from).catch(() => undefined))?.isFile()) {
+      // A lone file, e.g. a SKILL.md at the root of a repository whose other files are not the skill's.
+      await mkdir(upstreamDir, { recursive: true });
+      await copyFile(from, join(upstreamDir, "SKILL.md"));
+    } else if (await exists(join(from, "SKILL.md"))) {
+      await cp(from, upstreamDir, { recursive: true, filter: (path) => basename(path) !== ".git" });
+    } else {
       throw new SourceError(`${source.git}: no SKILL.md at ${source.path ?? "repository root"}`);
     }
-    await cp(from, upstreamDir, { recursive: true, filter: (path) => basename(path) !== ".git" });
   }
 
   const patch = join(dir, PATCH_FILE);
