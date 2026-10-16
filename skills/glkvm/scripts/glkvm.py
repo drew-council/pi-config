@@ -20,7 +20,7 @@ import click
 import httpx
 
 BASE_URL = "https://kvm.home.drewcouncil.com"
-CLI_PATH = "~/.pi/agent/skills/glkvm/scripts/glkvm.py"
+CLI_PATH = "{{skillDir}}/scripts/glkvm.py"
 SECRETS_FILE = Path.home() / ".pi" / "secrets" / "personal.json"
 STATE_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/glkvm-{os.getuid()}")) / "pi-glkvm"
 COOKIE_FILE = STATE_DIR / "cookies.json"

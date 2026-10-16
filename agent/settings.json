@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "1.2.0",
+  "lastChangelogVersion": "1.3.0",
   "extensions": [],
   "defaultTools": [
     "+codemode",
@@ -15,13 +15,7 @@
     "npm:@bizmyth/pi-git-conflicts",
     "npm:@bizmyth/pi-neovim-editor",
     "git:github.com/elidickinson/pi-claude-bridge",
-    "git:git@github.com:sheerhealth/pi-sheer",
-    {
-      "source": "git:github.com/anthropics/skills",
-      "skills": [
-        "skills/frontend-design/SKILL.md"
-      ]
-    }
+    "git:git@github.com:sheerhealth/pi-sheer"
   ],
   "theme": "catppuccin-mocha",
   "hideThinkingBlock": true,

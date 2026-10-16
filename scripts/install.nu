@@ -7,6 +7,7 @@
 # - applies patch-package patches from ./patches via Bun's postinstall
 # - applies patch-package patches from ./agent/patches to Pi-managed npm packages
 # - applies git patches from ./agent/git-patches to Pi-managed git packages
+# - generates Pi, Codex, and Claude Code skill directories from ./skills
 # - updates/installs Pi-managed npm packages with Bun from agent/settings.json
 # - removes peer-installed Pi SDK copies that would shadow the host's SDK
 # - initializes isolated work/personal accounts, reusing gh, gcloud ADC (Vertex AI), and existing Codex logins
@@ -295,6 +296,9 @@ def main [
 
   say "Applying Pi-managed git package patches"
   ^nu ($repo | path join "scripts" "patch-git-packages.nu")
+
+  say "Generating Pi, Codex, and Claude Code skills from ./skills"
+  ^bun ($repo | path join "scripts" "sync-skills.ts")
 
   say "Initializing account profiles (browser logins remain available through /log-me-in)"
   ^bun ($agent_dir | path join "scripts" "setup-accounts.ts")

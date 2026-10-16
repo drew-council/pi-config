@@ -2,6 +2,7 @@
 name: glkvm
 description: Manually invoked control of the configured PC through the GLKVM at kvm.home.drewcouncil.com. Supports screenshots, keyboard, mouse, OCR, Fingerbot, and API inspection.
 disable-model-invocation: true
+targets: [pi, codex]
 compatibility: Requires network access to kvm.home.drewcouncil.com.
 ---
 
@@ -10,7 +11,7 @@ compatibility: Requires network access to kvm.home.drewcouncil.com.
 ## Fixed setup
 
 - GLKVM: `https://kvm.home.drewcouncil.com`
-- Deterministic CLI: `~/.pi/agent/skills/glkvm/scripts/glkvm.py`
+- Deterministic CLI: `{{skillDir}}/scripts/glkvm.py`
 
 Do not ask for the address, username, or password, and do not use the curl examples below for real interactions. The CLI has the setup embedded, never prints the password, and caches only GLKVM session cookies. Always invoke it by the home-relative path shown here; never resolve `scripts/glkvm.py` relative to the session's working directory.
 
@@ -19,13 +20,13 @@ Do not ask for the address, username, or password, and do not use the curl examp
 First try a read-only command, which reuses the cached session:
 
 ```bash
-~/.pi/agent/skills/glkvm/scripts/glkvm.py status
+{{skillDir}}/scripts/glkvm.py status
 ```
 
 Only if it says the session is missing or expired, run this once:
 
 ```bash
-~/.pi/agent/skills/glkvm/scripts/glkvm.py login
+{{skillDir}}/scripts/glkvm.py login
 ```
 
 Do not run it again while the cached session works.
@@ -35,12 +36,12 @@ Do not run it again while the cached session works.
 The session can have any working directory. Invoke the CLI with its home-relative path. Start by observing, perform the smallest action needed, then observe again:
 
 ```bash
-~/.pi/agent/skills/glkvm/scripts/glkvm.py snapshot
+{{skillDir}}/scripts/glkvm.py snapshot
 # Read /tmp/glkvm_snapshot.jpg with the read tool.
-~/.pi/agent/skills/glkvm/scripts/glkvm.py --help
+{{skillDir}}/scripts/glkvm.py --help
 ```
 
-Common deterministic commands (set `GLKVM=~/.pi/agent/skills/glkvm/scripts/glkvm.py` to shorten repeated calls):
+Common deterministic commands (set `GLKVM={{skillDir}}/scripts/glkvm.py` to shorten repeated calls):
 
 ```bash
 $GLKVM status

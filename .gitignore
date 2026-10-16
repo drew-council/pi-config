@@ -32,6 +32,8 @@ bun/*
 bun/typecheck/*
 !bun/typecheck/package.json
 agent/git/
+# Generated from ./skills by scripts/sync-skills.ts.
+agent/skills/
 agent/node_modules/
 agent/prompt-history.json
 agent/remote-control.json
