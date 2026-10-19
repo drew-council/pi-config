@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, McpServerConfig } from "@earendil-works/pi-coding-agent";
 import workDrive from "../../extensions/work-drive.js";
@@ -22,7 +22,7 @@ type Handler = (event?: {
   parentToolCallId?: string;
 }) => { block: boolean } | undefined;
 function setup() {
-  const root = execFileSync("tmp", { encoding: "utf8" }).trim();
+  const root = mkdtempSync(join(tmpdir(), "work-drive-test-"));
   dirs.push(root);
   const agentDir = join(root, "agent");
   mkdirSync(agentDir);
