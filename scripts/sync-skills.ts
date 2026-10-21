@@ -12,6 +12,7 @@
  *     git: https://github.com/github/gh-stack
  *     path: skills/gh-stack        # directory containing SKILL.md, or a lone skill file (default: repository root)
  *     ref: main                    # branch, tag, or commit (default: remote HEAD)
+ *     into: references             # copy `path` into this subdirectory instead of expecting an upstream SKILL.md
  *
  * With a source, the upstream skill directory is materialized (for `command`, stdout becomes its
  * SKILL.md) and the skill's `upstream.patch`, if present, is applied to it with `git apply`. Local
@@ -29,7 +30,7 @@
  */
 import { chmod, copyFile, cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 
 export type Target = "pi" | "codex" | "claude";
 export const TARGETS: Target[] = ["pi", "codex", "claude"];
@@ -68,7 +69,7 @@ const PATCH_FILE = "upstream.patch";
 const SKILL_DIR_TOKEN = "{{skillDir}}";
 
 type Frontmatter = Record<string, unknown>;
-type Source = { command: string } | { git: string; path?: string; ref?: string };
+type Source = { command: string } | { git: string; path?: string; ref?: string; into?: string };
 
 interface SkillFile {
   frontmatter: Frontmatter;
@@ -153,15 +154,24 @@ function parseSource(value: unknown, label: string): Source | undefined {
   if (value === undefined) return undefined;
   const source = value as Record<string, unknown>;
   const isString = (key: string) => source[key] === undefined || typeof source[key] === "string";
-  if (typeof value !== "object" || value === null || ["command", "git", "path", "ref"].some((k) => !isString(k))) {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    ["command", "git", "path", "ref", "into"].some((k) => !isString(k))
+  ) {
     throw new Error(`${label}: source must be a mapping of strings`);
   }
   const keys = Object.keys(source);
   if (typeof source.command === "string" && keys.length === 1) return { command: source.command };
-  if (typeof source.git === "string" && keys.every((key) => ["git", "path", "ref"].includes(key))) {
-    return { git: source.git, path: source.path as string, ref: source.ref as string };
+  if (typeof source.git === "string" && keys.every((key) => ["git", "path", "ref", "into"].includes(key))) {
+    return {
+      git: source.git,
+      path: source.path as string | undefined,
+      ref: source.ref as string | undefined,
+      into: source.into as string | undefined,
+    };
   }
-  throw new Error(`${label}: source must be either { command } or { git, path?, ref? }`);
+  throw new Error(`${label}: source must be either { command } or { git, path?, ref?, into? }`);
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -259,7 +269,21 @@ async function materializeUpstream(dir: string, source: Source, workDir: string,
   } else {
     const checkout = await git.checkout(source.git, source.ref);
     const from = resolve(checkout, source.path ?? ".");
-    if ((await stat(from).catch(() => undefined))?.isFile()) {
+    const fromStat = await stat(from).catch(() => undefined);
+    if (source.into !== undefined) {
+      const dest = resolve(upstreamDir, source.into);
+      if (!source.into.trim() || dest === upstreamDir || !dest.startsWith(`${upstreamDir}${sep}`)) {
+        throw new Error(`skills/${basename(dir)}/SKILL.md: source.into must be a relative subdirectory`);
+      }
+      if (fromStat?.isFile()) {
+        await mkdir(dirname(dest), { recursive: true });
+        await copyFile(from, dest);
+      } else if (fromStat?.isDirectory()) {
+        await cp(from, dest, { recursive: true, filter: (path) => basename(path) !== ".git" });
+      } else {
+        throw new SourceError(`${source.git}: no ${source.path ?? "repository root"}`);
+      }
+    } else if (fromStat?.isFile()) {
       // A lone file, e.g. a SKILL.md at the root of a repository whose other files are not the skill's.
       await mkdir(upstreamDir, { recursive: true });
       await copyFile(from, join(upstreamDir, "SKILL.md"));
@@ -285,7 +309,7 @@ async function materializeUpstream(dir: string, source: Source, workDir: string,
 function describeSource(source: Source | undefined): string {
   if (!source) return "local";
   if ("command" in source) return `command \`${source.command}\``;
-  return `git ${source.git}${source.path ? ` ${source.path}` : ""}${source.ref ? ` @ ${source.ref}` : ""}`;
+  return `git ${source.git}${source.path ? ` ${source.path}` : ""}${source.ref ? ` @ ${source.ref}` : ""}${source.into ? ` -> ${source.into}` : ""}`;
 }
 
 export async function resolveSkill(dir: string, workDir: string, git: GitCache): Promise<ResolvedSkill> {
@@ -304,7 +328,10 @@ export async function resolveSkill(dir: string, workDir: string, git: GitCache):
   let files = new Map<string, FileEntry>();
   if (source) {
     const upstreamDir = await materializeUpstream(dir, source, workDir, git);
-    upstream = parseSkillFile(await readFile(join(upstreamDir, "SKILL.md"), "utf8"), `${name} upstream SKILL.md`);
+    const upstreamSkill = join(upstreamDir, "SKILL.md");
+    if (await exists(upstreamSkill)) {
+      upstream = parseSkillFile(await readFile(upstreamSkill, "utf8"), `${name} upstream SKILL.md`);
+    }
     files = await listFiles(upstreamDir, false);
   }
   for (const [rel, entry] of await listFiles(dir, true)) files.set(rel, entry);

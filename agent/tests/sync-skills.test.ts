@@ -98,6 +98,7 @@ test("sync generates per-consumer skills from local, command, and git sources", 
       "---\nname: remote\ndescription: Remote.\n---\n\nRemote body.\n",
     );
     await write(join(upstreamRepo, "skills", "remote", "references", "guide.md"), "Guide {{skillDir}}\n");
+    await write(join(upstreamRepo, "docs", "general", "0121.md"), "# Resource-oriented design\n");
     await write(join(upstreamRepo, "SKILL.md"), "Root body.\n");
     git(upstreamRepo, "init", "-q");
     git(upstreamRepo, "add", ".");
@@ -110,6 +111,10 @@ test("sync generates per-consumer skills from local, command, and git sources", 
       join(sourceDir, "root-file", "SKILL.md"),
       `---\ndescription: Root file.\ntargets: [pi]\nsource:\n  git: ${upstreamRepo}\n  path: SKILL.md\n---\n`,
     );
+    await write(
+      join(sourceDir, "into-subdir", "SKILL.md"),
+      `---\ndescription: Docs in a subdirectory.\ntargets: [pi]\nsource:\n  git: ${upstreamRepo}\n  path: docs/general\n  into: references\n---\n\nRead \`{{skillDir}}/references/0121.md\`.\n`,
+    );
 
     const result = await syncSkills({ sourceDir, home, cacheDir: join(root, "cache") });
     assert.deepEqual(result.errors, []);
@@ -117,6 +122,7 @@ test("sync generates per-consumer skills from local, command, and git sources", 
       "codex/local-tool",
       "codex/remote",
       "pi/from-command",
+      "pi/into-subdir",
       "pi/local-tool",
       "pi/remote",
       "pi/root-file",
@@ -164,6 +170,16 @@ test("sync generates per-consumer skills from local, command, and git sources", 
     // A file path takes only that file, not the rest of the repository.
     assert.deepEqual((await readdir(join(home, ".pi/agent/skills/root-file"))).sort(), [MARKER_FILE, "SKILL.md"]);
     assert.match(await readFile(join(home, ".pi/agent/skills/root-file/SKILL.md"), "utf8"), /Root body\./);
+
+    // `into` copies a directory without an upstream SKILL.md into a subdirectory of the local skill.
+    assert.equal(
+      await readFile(join(home, ".pi/agent/skills/into-subdir/references/0121.md"), "utf8"),
+      "# Resource-oriented design\n",
+    );
+    assert.match(
+      await readFile(join(home, ".pi/agent/skills/into-subdir/SKILL.md"), "utf8"),
+      /Read `~\/\.pi\/agent\/skills\/into-subdir\/references\/0121\.md`\./,
+    );
   });
 });
 
