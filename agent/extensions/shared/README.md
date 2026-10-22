@@ -12,3 +12,4 @@ Current contracts:
 - `session-entries.ts` finds the latest matching custom-entry data. Callers remain responsible for choosing session-wide `getEntries()` or branch-local `getBranch()` semantics.
 - `paths.ts` strips one leading `@`, expands `~`, and resolves paths against a caller-supplied working directory. Command parsing such as trimming or quote removal stays with the caller.
 - `clipboard.ts` reads clipboard text through platform CLI tools (`pbpaste`, `wl-paste`/`xclip`/`xsel`, PowerShell, Termux) via a caller-supplied runner such as `pi.exec`, and reports which clipboard was read. Pi exports `copyToClipboard` but not a text reader, which is why this exists. Callers decide what to do with the text and how to surface failures.
+- `time.ts` formats millisecond durations (`45s`, `42m 13s`, `1h 14m 17s`) and 12-hour local clock times (`11:14 AM`) with ASCII whitespace normalization.

@@ -1,3 +1,5 @@
+import { formatClockTime } from "../shared/time.js";
+
 /** Shared formatting helpers for the /usage extension. */
 
 export function humanizeSeconds(seconds: number | null | undefined): string {
@@ -32,7 +34,7 @@ export function formatResetTime(iso: string | null | undefined): string {
   const time = Date.parse(iso);
   if (!Number.isFinite(time)) return "";
   if (time - Date.now() < 24 * 3600 * 1000) {
-    return new Date(time).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return formatClockTime(time);
   }
   return new Date(time).toLocaleDateString([], { month: "short", day: "numeric" });
 }
