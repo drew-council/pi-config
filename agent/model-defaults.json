@@ -8,7 +8,7 @@
     },
     "personal": {
       "provider": "openrouter",
-      "model": "z-ai/glm-5.3-flash",
+      "model": "deepseek/deepseek-v4.1-flash-1017",
       "thinking": "high"
     }
   }

@@ -61,6 +61,7 @@ test("model blacklist exposes only approved OpenRouter models", () => {
     { provider: "openrouter", id: "z-ai/glm-5.3-flash" },
     { provider: "openrouter", id: "z-ai/glm-5.3" },
     { provider: "openrouter", id: "deepseek/deepseek-v4.1-flash" },
+    { provider: "openrouter", id: "deepseek/deepseek-v4.1-flash-1017" },
     { provider: "openrouter", id: "deepseek/deepseek-v4-flash" },
     { provider: "openrouter", id: "z-ai/glm-4.6" },
     { provider: "z-ai", id: "glm-5.3-flash" },
@@ -71,7 +72,7 @@ test("model blacklist exposes only approved OpenRouter models", () => {
     [
       "openrouter/z-ai/glm-5.3-flash",
       "openrouter/z-ai/glm-5.3",
-      "openrouter/deepseek/deepseek-v4.1-flash",
+      "openrouter/deepseek/deepseek-v4.1-flash-1017",
       "z-ai/glm-5.3-flash",
     ],
   );
@@ -82,6 +83,11 @@ test("model blacklist exposes only the pinned Fireworks equivalents of approved 
     { provider: "fireworks", id: "accounts/fireworks/models/glm-5p3", name: "GLM 5.3" },
     { provider: "fireworks", id: "accounts/fireworks/models/glm-5p3-flash", name: "GLM 5.3 Flash" },
     { provider: "fireworks", id: "accounts/fireworks/models/deepseek-v4p1-flash", name: "DeepSeek V4.1 Flash" },
+    {
+      provider: "fireworks",
+      id: "accounts/fireworks/models/deepseek-v4p1-flash-1017",
+      name: "DeepSeek V4.1 Flash 1017",
+    },
     { provider: "fireworks", id: "accounts/fireworks/models/kimi-k3", name: "Kimi K3" },
     { provider: "fireworks", id: "accounts/fireworks/routers/glm-latest", name: "GLM Latest" },
     { provider: "fireworks", id: "accounts/fireworks/routers/glm-flash-latest", name: "GLM Flash Latest" },
@@ -94,7 +100,7 @@ test("model blacklist exposes only the pinned Fireworks equivalents of approved 
     [
       "accounts/fireworks/models/glm-5p3",
       "accounts/fireworks/models/glm-5p3-flash",
-      "accounts/fireworks/models/deepseek-v4p1-flash",
+      "accounts/fireworks/models/deepseek-v4p1-flash-1017",
     ],
   );
 });

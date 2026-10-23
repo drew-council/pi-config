@@ -44,7 +44,7 @@ describe("profile defaults", () => {
       version: 1,
       profiles: {
         work: { provider: "claude-bridge", model: "claude-opus-5", thinking: "medium" },
-        personal: { provider: "openrouter", model: "z-ai/glm-5.3-flash", thinking: "high" },
+        personal: { provider: "openrouter", model: "deepseek/deepseek-v4.1-flash-1017", thinking: "high" },
       },
     });
     expect(readProfileDefault(agentDir, "work")).toMatchObject({
@@ -64,7 +64,7 @@ describe("profile defaults", () => {
     let profile: "work" | "personal" = "work";
     const preferences: Record<"work" | "personal", ModelEffortPreference> = {
       work: { provider: "claude-bridge", model: "claude-opus-5", thinking: "medium" },
-      personal: { provider: "openrouter", model: "z-ai/glm-5.3-flash", thinking: "high" },
+      personal: { provider: "openrouter", model: "deepseek/deepseek-v4.1-flash-1017", thinking: "high" },
     };
     const target: Parameters<typeof installProfileDefaultsPolicy>[0] = {
       getDefaultProvider: () => undefined,
