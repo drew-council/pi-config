@@ -68,16 +68,10 @@ for (const profile of PROFILE_NAMES) {
     const openai = readJson(profileAuthPath(agentDir, profile)).openai as { type?: string } | undefined;
     console.log(
       openai?.type === "oauth"
-        ? "personal: ChatGPT subscription login saved (openai; direct-grant usage unsupported)"
+        ? "personal: ChatGPT subscription login saved"
         : openai
           ? "personal: openai credential preserved; subscription login is /log-me-in openai"
-          : "personal: ChatGPT subscription needs /log-me-in openai (optional; legacy Codex preserved)",
+          : "personal: ChatGPT subscription needs /log-me-in openai (optional)",
     );
-    try {
-      const auth = await runtime.getAuth("openai-codex", { signal: AbortSignal.timeout(15_000) });
-      console.log(`personal: Codex ${auth ? "saved login is ready" : "needs /log-me-in openai-codex"}`);
-    } catch {
-      console.log("personal: Codex needs /log-me-in openai-codex (saved credentials preserved)");
-    }
   }
 }

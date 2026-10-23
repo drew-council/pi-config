@@ -90,8 +90,8 @@ describe("profile defaults", () => {
     expect(preferences.work).toEqual({ provider: "claude-bridge", model: "claude-opus-5", thinking: "high" });
     profile = "personal";
     expect(target.getDefaultProvider()).toBe("openrouter");
-    target.setDefaultModelAndProvider("openai-codex", "gpt-5.6-luna");
-    expect(preferences.personal).toEqual({ provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" });
+    target.setDefaultModelAndProvider("openai", "gpt-5.6-luna");
+    expect(preferences.personal).toEqual({ provider: "openai", model: "gpt-5.6-luna", thinking: "high" });
     install();
     expect(target.getDefaultModel).toBe(patchedGetter);
   });

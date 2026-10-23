@@ -21,11 +21,11 @@ import {
 import { profileAuthPath } from "../../extensions/shared/accounts.js";
 
 const model = (provider: string, id: string, reasoning = true) => ({ provider, id, reasoning }) as Model<Api>;
-const codex = model("openai-codex", "personal-model");
+const personalModel = model("openai", "personal-model");
 const copilot = model("github-copilot", "gpt-5.6-luna");
 const google = model("google-vertex", "gemini-3.8-flash");
 const claude = model("claude-bridge", "claude-opus-5");
-function modelContext(models: Model<Api>[], current: Model<Api> | undefined = codex, thinking = "high") {
+function modelContext(models: Model<Api>[], current: Model<Api> | undefined = personalModel, thinking = "high") {
   return {
     model: current,
     thinkingLevel: thinking,
@@ -34,7 +34,7 @@ function modelContext(models: Model<Api>[], current: Model<Api> | undefined = co
 }
 
 test("model arguments expose an explicit effort suffix", () => {
-  expect(thinkingFromModelArgument("openai-codex/gpt-5.6-luna:xhigh")).toBe("xhigh");
+  expect(thinkingFromModelArgument("openai/gpt-5.6-luna:xhigh")).toBe("xhigh");
   expect(thinkingFromModelArgument("claude-opus-5")).toBeUndefined();
 });
 
@@ -113,7 +113,7 @@ const workDefault: ModelEffortPreference = {
 };
 
 test("profile defaults select the exact complete model/effort pair", async () => {
-  const ctx = modelContext([codex, claude]);
+  const ctx = modelContext([personalModel, claude]);
   const levels: string[] = [];
   const changed: Model<Api>[] = [];
   const result = await applyProfileDefault(
@@ -159,7 +159,7 @@ test("an unavailable default uses a deterministic profile fallback and clamps ef
   expect(result.pair).toEqual({ provider: copilot.provider, model: copilot.id, thinking: "medium" });
   expect(result.usedFallback).toBeTrue();
 
-  const offCtx = modelContext([noReasoning], codex);
+  const offCtx = modelContext([noReasoning], personalModel);
   const off = await applyProfileDefault(
     {
       setModel: async (selected) => {
@@ -368,21 +368,18 @@ test("subscription login forwards OAuth and Pi's device ID through the installed
   installModelPolicy(runtime as Parameters<typeof installModelPolicy>[0], () => profile);
   const interaction = { signal: AbortSignal.abort(), prompt: async () => "", notify: () => {} };
   const getDeviceId = () => "fixture-device";
-  for (const provider of ["openai", "openai-codex"] as const) {
-    await loginSubscription(runtime, provider, interaction, getDeviceId);
-  }
+  await loginSubscription(runtime, "openai", interaction, getDeviceId);
   expect(calls[0]).toEqual(["openai", "oauth", interaction, { getDeviceId }]);
-  expect(calls[1]).toEqual(["openai-codex", "oauth", interaction, undefined]);
   expect(calls[0][3]?.getDeviceId?.()).toBe("fixture-device");
   profile = "work";
   await expect(loginSubscription(runtime, "openai", interaction, getDeviceId)).rejects.toThrow("/profile");
-  expect(calls).toHaveLength(2);
+  expect(calls).toHaveLength(1);
 });
 
-test("new subscription defaults are additive and legacy pairs remain selected", async () => {
+test("subscription defaults preserve the selected model and effort pair", async () => {
   const chatgpt = model("openai", "gpt-6.1-sol");
-  for (const selected of [codex, chatgpt]) {
-    const ctx = modelContext([codex, chatgpt, claude], selected, "medium");
+  for (const selected of [personalModel, chatgpt]) {
+    const ctx = modelContext([personalModel, chatgpt, claude], selected, "medium");
     const pair = { provider: selected.provider, model: selected.id, thinking: "medium" as const };
     expect(
       await ensureProfilePair(

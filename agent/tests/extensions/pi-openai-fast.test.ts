@@ -10,7 +10,7 @@ test("fast-model support is exact and payload updates are immutable", () => {
   const configured = [{ provider: "custom", id: "priority-deployment" }];
 
   assert.equal(_test.isFastSupportedModel({ provider: "openai", id: "gpt-5" } as never, configured), true);
-  assert.equal(_test.isFastSupportedModel({ provider: "openai-codex", id: "gpt-5.2-pro" } as never, configured), true);
+  assert.equal(_test.isFastSupportedModel({ provider: "openai-codex", id: "gpt-5.2-pro" } as never, configured), false);
   assert.equal(_test.isFastSupportedModel({ provider: "openai", id: "gpt-5.2-preview" } as never, configured), false);
   assert.equal(
     _test.isFastSupportedModel({ provider: "custom", id: "priority-deployment" } as never, configured),

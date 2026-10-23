@@ -6,8 +6,8 @@ import { BorderedLoader, DynamicBorder, getAgentDir } from "@earendil-works/pi-c
 import { Box, Container, Key, matchesKey, Spacer, Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { PROFILE_NAMES, type ProfileName, profileAuthPath, providerAllowed } from "../shared/accounts.js";
 import { type ClaudeUsageData, parseClaudeUsage, readClaudeCredentials } from "./claude.js";
-import { type CodexUsageData, parseCodexUsage } from "./codex.js";
-import { clampPercent, formatMoney, formatResetTime, humanizeSeconds } from "./format.js";
+import { clampPercent, formatMoney, formatResetTime, formatTokens } from "./format.js";
+import { appendLocalUsage, emptyLocalUsage, type LocalUsageSummary, readLocalUsage } from "./local.js";
 import { type CopilotUsageData, parseCopilotUsage } from "./github-copilot.js";
 import { applyOpenRouterCredits, type OpenRouterUsageData, parseOpenRouterKeyUsage } from "./openrouter.js";
 import { usageColumns } from "./view.js";
@@ -16,7 +16,7 @@ const AGENT_DIR = getAgentDir();
 
 const SECRETS_FILE = join(homedir(), ".pi", "secrets", "personal.json");
 
-const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
+const CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage";
 const CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const COPILOT_USER_URL = "https://api.github.com/copilot_internal/user";
 const OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/auth/key";
@@ -27,20 +27,18 @@ const BAR_WIDTH = 24;
 type ProviderResult<T> = { status: "ok"; data: T } | { status: "error"; message: string };
 
 export interface Snapshot {
-  chatgpt?: ProviderResult<never> | null;
-  codex: ProviderResult<CodexUsageData> | null;
+  chatgpt: ProviderResult<ChatGPTUsageData> | null;
   claude: ProviderResult<ClaudeUsageData> | null;
   copilot: ProviderResult<CopilotUsageData> | null;
   openrouter: ProviderResult<OpenRouterUsageData> | null;
   fetchedAt: number;
 }
 
-interface CodexCredentials {
-  access: string;
-  accountId: string | null;
-  expiresAt: number | null;
-  /** Where the credential was resolved from, for error messages. */
-  source: string;
+interface ChatGPTUsageData {
+  /** ChatGPT exposes plan usage only in its own settings UI, not to OAuth API clients. */
+  usageUrl: string;
+  /** Local Pi activity, which can be shown without claiming it is plan quota. */
+  local: LocalUsageSummary;
 }
 
 async function readJson(path: string): Promise<unknown> {
@@ -51,19 +49,7 @@ async function readJson(path: string): Promise<unknown> {
   }
 }
 
-function codexCredentialsFrom(auth: unknown, source: string): CodexCredentials | null {
-  const providers = auth as Record<string, Record<string, unknown>> | null;
-  const codex = providers?.["openai-codex"];
-  if (!codex || codex.type !== "oauth" || typeof codex.access !== "string" || !codex.access) return null;
-  return {
-    access: codex.access,
-    accountId: typeof codex.accountId === "string" ? codex.accountId : null,
-    expiresAt: typeof codex.expires === "number" ? codex.expires : null,
-    source,
-  };
-}
-
-function chatgptUsageFrom(auth: unknown): ProviderResult<never> | null {
+function chatgptUsageFrom(auth: unknown): ProviderResult<ChatGPTUsageData> | null {
   const credential = (auth as Record<string, Record<string, unknown>> | null)?.openai;
   if (!credential || credential.type !== "oauth") return null;
   const valid =
@@ -77,19 +63,29 @@ function chatgptUsageFrom(auth: unknown): ProviderResult<never> | null {
     Boolean(credential.clientId.trim()) &&
     Array.isArray(credential.scopes) &&
     credential.scopes.includes("chatgpt.tokens.use.direct");
-  return {
-    status: "error",
-    message: valid
-      ? "Usage unsupported for direct ChatGPT grant (openai); legacy Codex usage below does not measure this grant."
-      : "Invalid saved ChatGPT subscription login; use /log-me-in openai to reconnect.",
-  };
+  if (!valid) {
+    return {
+      status: "error",
+      message: "Invalid saved ChatGPT subscription login; use /log-me-in openai to reconnect.",
+    };
+  }
+  return { status: "ok", data: { usageUrl: CHATGPT_USAGE_URL, local: emptyLocalUsage() } };
+}
+
+export function applyLocalChatGPTUsage(snapshot: Snapshot, local: LocalUsageSummary): Snapshot {
+  if (snapshot.chatgpt?.status !== "ok") return snapshot;
+  return { ...snapshot, chatgpt: { status: "ok", data: { ...snapshot.chatgpt.data, local } } };
+}
+
+function localActivityLines(local: LocalUsageSummary, dim: (text: string) => string): string[] {
+  const line = (label: string, totals: LocalUsageSummary["last5h"]) =>
+    totals.requests === 0
+      ? `  ${label.padEnd(3)} ${dim("no local activity")}`
+      : `  ${label.padEnd(3)} ${totals.requests} request${totals.requests === 1 ? "" : "s"} · ${formatTokens(totals.totalTokens)} tokens · ${formatMoney(totals.cost)} est.`;
+  return [line("5h", local.last5h), line("7d", local.last7d)];
 }
 
 // Usage reads each provider's owning profile, never the active/global store.
-async function readCodexCredentials(agentDir = AGENT_DIR): Promise<CodexCredentials | null> {
-  return codexCredentialsFrom(await readJson(profileAuthPath(agentDir, "personal")), 'auth profile "personal"');
-}
-
 async function readOpenRouterApiKey(): Promise<string | null> {
   const auth = (await readJson(profileAuthPath(AGENT_DIR, "personal"))) as {
     openrouter?: { type?: string; key?: unknown };
@@ -112,41 +108,6 @@ async function fetchJson(
     throw new Error(`HTTP ${response.status} from ${new URL(url).host}`);
   }
   return (await response.json()) as unknown;
-}
-
-async function fetchCodex(
-  signal: AbortSignal | undefined,
-  agentDir = AGENT_DIR,
-): Promise<ProviderResult<CodexUsageData>> {
-  const credentials = await readCodexCredentials(agentDir);
-  if (!credentials) {
-    return {
-      status: "error",
-      message: "No legacy Codex OAuth login (use /log-me-in openai-codex); direct ChatGPT usage is unsupported.",
-    };
-  }
-  if (credentials.expiresAt !== null && credentials.expiresAt <= Date.now()) {
-    return {
-      status: "error",
-      message: `access token expired in ${credentials.source} (run /login to refresh)`,
-    };
-  }
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${credentials.access}`,
-    Accept: "application/json",
-    "User-Agent": "codex_cli_rs",
-    originator: "codex_cli_rs",
-  };
-  if (credentials.accountId) headers["ChatGPT-Account-Id"] = credentials.accountId;
-  try {
-    const payload = await fetchJson(CODEX_USAGE_URL, headers, signal);
-    const data = parseCodexUsage(payload);
-    if (!data) return { status: "error", message: "unexpected response payload" };
-    return { status: "ok", data };
-  } catch (error) {
-    if (signal?.aborted) throw error;
-    return { status: "error", message: error instanceof Error ? error.message : String(error) };
-  }
 }
 
 async function fetchOpenRouter(signal: AbortSignal | undefined): Promise<ProviderResult<OpenRouterUsageData>> {
@@ -243,14 +204,13 @@ async function fetchClaude(signal: AbortSignal | undefined): Promise<ProviderRes
 }
 
 async function loadSnapshot(signal: AbortSignal | undefined): Promise<Snapshot> {
-  const [codex, claude, copilot, openrouter] = await Promise.all([
-    fetchCodex(signal),
+  const [claude, copilot, openrouter] = await Promise.all([
     fetchClaude(signal),
     fetchCopilot(signal),
     fetchOpenRouter(signal),
   ]);
   const chatgpt = chatgptUsageFrom(await readJson(profileAuthPath(AGENT_DIR, "personal")));
-  return { chatgpt, codex, claude, copilot, openrouter, fetchedAt: Date.now() };
+  return { chatgpt, claude, copilot, openrouter, fetchedAt: Date.now() };
 }
 
 function remainingColor(remainingPercent: number): string {
@@ -286,36 +246,15 @@ function snapshotLines(
   const dim = (text: string) => theme.fg("dim", text);
   const muted = (text: string) => theme.fg("muted", text);
 
-  if (snapshot.chatgpt?.status === "error") {
-    lines.push(theme.bold("ChatGPT subscription (openai)"), `  ${dim(snapshot.chatgpt.message)}`, "");
-  }
-  const codex = snapshot.codex;
-  if (codex) {
-    lines.push(theme.bold("OpenAI Codex · legacy usage"));
-    if (codex.status === "error") {
-      lines.push(`  ${dim("unavailable:")} ${theme.fg("error", codex.message)}`);
+  const chatgpt = snapshot.chatgpt;
+  if (chatgpt) {
+    lines.push(theme.bold("ChatGPT subscription (openai)"));
+    if (chatgpt.status === "error") {
+      lines.push(`  ${dim("unavailable:")} ${theme.fg("error", chatgpt.message)}`);
     } else {
-      const data = codex.data;
-      const windows = data.windows.length ? data.windows : [{ label: "?", usedPercent: 0, resetAfterSeconds: null }];
-      for (const win of windows) {
-        const remaining = 100 - clampPercent(win.usedPercent);
-        const reset =
-          win.resetAfterSeconds !== null ? dim(`  resets in ${humanizeSeconds(win.resetAfterSeconds)}`) : "";
-        lines.push(
-          `  ${muted(win.label.padEnd(3))} window  ${renderBar(theme, remaining)}  ${percentColor(theme, remaining, percentLeftText(remaining))}${reset}`,
-        );
-      }
-      if (data.rateLimitReached) lines.push(`  ${theme.fg("error", "rate limit reached")}`);
-      if (data.creditsSummary) lines.push(`  ${dim("credits:")} ${data.creditsSummary}`);
-      const spend = data.spendControl;
-      if (spend) {
-        const remaining = 100 - clampPercent(spend.usedPercent);
-        const limitText = spend.limit !== null ? formatMoney(spend.limit) : "unknown limit";
-        const reset = spend.resetAfterSeconds !== null ? `, resets in ${humanizeSeconds(spend.resetAfterSeconds)}` : "";
-        lines.push(
-          `  ${dim("spend control:")} ${percentColor(theme, remaining, percentLeftText(remaining))} of ${limitText}${reset} ${dim(`(${spend.source})`)}`,
-        );
-      }
+      lines.push(`  ${dim("plan usage:")} ${chatgpt.data.usageUrl}`);
+      lines.push(`  ${dim("local Pi activity (not plan quota):")}`);
+      lines.push(...localActivityLines(chatgpt.data.local, dim));
     }
     lines.push("");
   }
@@ -406,7 +345,7 @@ function snapshotLines(
     }
   }
 
-  if (!codex && !claude && !copilot && !openrouter) {
+  if (!claude && !copilot && !openrouter) {
     lines.push(dim("No provider credentials found."));
   }
   return lines;
@@ -420,7 +359,6 @@ export function profileSnapshotLines(
   const scoped = {
     ...snapshot,
     chatgpt: providerAllowed(profile, "openai") ? snapshot.chatgpt : null,
-    codex: providerAllowed(profile, "openai-codex") ? snapshot.codex : null,
     claude: providerAllowed(profile, "claude-bridge") ? snapshot.claude : null,
     copilot: providerAllowed(profile, "github-copilot") ? snapshot.copilot : null,
     openrouter: providerAllowed(profile, "openrouter") ? snapshot.openrouter : null,
@@ -453,16 +391,41 @@ function plainSnapshotText(snapshot: Snapshot): string {
   return lines.join("\n").replace(/█|░/g, (c) => (c === "█" ? "#" : "-"));
 }
 
-export const _test = { readCodexCredentials, readCopilotCredentials, chatgptUsageFrom, fetchCodex };
+export const _test = { readCopilotCredentials, chatgptUsageFrom, localActivityLines };
 
 export default function (pi: ExtensionAPI) {
+  const recorded = new Set<string>();
+  pi.on("message_end", (event) => {
+    const message = event.message;
+    if (message.role !== "assistant" || message.provider !== "openai" || message.stopReason === "pending") return;
+    if (!message.usage || !Number.isFinite(message.usage.totalTokens) || message.usage.totalTokens <= 0) return;
+    const key = `${message.responseId ?? ""}\0${message.timestamp}\0${message.usage.totalTokens}`;
+    if (recorded.has(key)) return;
+    recorded.add(key);
+    try {
+      appendLocalUsage(AGENT_DIR, message.usage, message.timestamp);
+    } catch {
+      // Local activity is advisory; never fail a completed model response.
+    }
+  });
+
+  const localChatGPTUsage = (): LocalUsageSummary => {
+    try {
+      return readLocalUsage(AGENT_DIR);
+    } catch {
+      return emptyLocalUsage();
+    }
+  };
+  const loadSnapshotWithLocalUsage = async (signal: AbortSignal | undefined) =>
+    applyLocalChatGPTUsage(await loadSnapshot(signal), localChatGPTUsage());
+
   pi.registerCommand("usage", {
     description: "Show usage in Work and Personal profile columns",
     handler: async (_args, ctx) => {
       let snapshot: Snapshot | null = null;
 
       if (ctx.mode !== "tui") {
-        snapshot = await loadSnapshot(undefined);
+        snapshot = await loadSnapshotWithLocalUsage(undefined);
         ctx.ui.notify(plainSnapshotText(snapshot), "info");
         return;
       }
@@ -470,7 +433,7 @@ export default function (pi: ExtensionAPI) {
       snapshot = await ctx.ui.custom<Snapshot | null>((tui, theme, _keybindings, done) => {
         const loader = new BorderedLoader(tui, theme, "Fetching provider usage...");
         loader.onAbort = () => done(null);
-        loadSnapshot(loader.signal)
+        loadSnapshotWithLocalUsage(loader.signal)
           .then(done)
           .catch(() => done(null));
         return loader;
@@ -488,7 +451,7 @@ export default function (pi: ExtensionAPI) {
           cached = undefined;
           _tui.requestRender();
           try {
-            snapshot = await loadSnapshot(undefined);
+            snapshot = await loadSnapshotWithLocalUsage(undefined);
           } catch {
             // keep previous snapshot on refresh failure
           }

@@ -14,8 +14,8 @@ test("model blacklist removes requested families and version ranges", () => {
     { provider: "grok-cli", id: "grok-4.3" },
     { provider: "grok-cli", id: "grok-4.5" },
     { provider: "grok-cli", id: "grok-composer-2.5-fast" },
-    { provider: "openai-codex", id: "gpt-5.5" },
-    { provider: "openai-codex", id: "gpt-5.6-luna" },
+    { provider: "openai", id: "gpt-5.5" },
+    { provider: "openai", id: "gpt-5.6-luna" },
   ];
 
   assert.deepEqual(
@@ -141,7 +141,7 @@ test("the unified filter applies profile visibility and blacklist rules together
   const models = [
     { provider: "google-vertex", id: "gemini-3-flash" },
     { provider: "google-vertex", id: "gemini-3.8-flash" },
-    { provider: "openai-codex", id: "gpt-5.6-luna" },
+    { provider: "openai", id: "gpt-5.6-luna" },
   ];
   assert.deepEqual(
     _test.filterModels(models, "work").map((model) => model.id),

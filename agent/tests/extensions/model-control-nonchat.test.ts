@@ -5,7 +5,7 @@ import { installModelPolicy, NON_CHAT_ALLOWLISTS } from "../../extensions/model-
 import type { ProfileName } from "../../extensions/shared/accounts.js";
 
 const chat = { provider: "google-vertex", id: "gemini-3.8-flash", type: "chat" } as Model<Api>;
-const personalChat = { provider: "openai-codex", id: "gpt-6.1-sol", type: "chat" } as Model<Api>;
+const personalChat = { provider: "openai", id: "gpt-6.1-sol", type: "chat" } as Model<Api>;
 const classifier = {
   provider: "openrouter",
   id: "typesafe/jev-1.13",

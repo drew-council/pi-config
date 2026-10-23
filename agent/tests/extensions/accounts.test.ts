@@ -132,14 +132,14 @@ describe("account initialization", () => {
     const legacy = {
       google: { type: "api_key", key: "ai-studio-key" },
       "google-vertex": vertex,
-      "openai-codex": oauth,
+      openai: oauth,
       unrelated: { type: "api_key", key: "leave-alone" },
     };
     json(join(agent, "auth.json"), legacy);
     ensureProfileFiles(agent);
     expect(readJson(profileAuthPath(agent, "work"))).toEqual({ "google-vertex": vertex });
     // Vertex is shared, so personal receives it too.
-    expect(readJson(profileAuthPath(agent, "personal"))).toEqual({ "google-vertex": vertex, "openai-codex": oauth });
+    expect(readJson(profileAuthPath(agent, "personal"))).toEqual({ "google-vertex": vertex, openai: oauth });
     json(profileAuthPath(agent, "work"), { "google-vertex": { type: "api_key", key: "new-key" } });
     ensureProfileFiles(agent);
     expect(readJson(profileAuthPath(agent, "work"))).toEqual({ "google-vertex": { type: "api_key", key: "new-key" } });
@@ -165,11 +165,11 @@ describe("account initialization", () => {
     ensureProfileFiles(agent);
     mkdirSync(join(root, "secrets"));
     json(join(root, "secrets/personal.json"), { openrouter: { apiKey: "router-test-key" } });
-    json(profileAuthPath(agent, "personal"), { "openai-codex": oauth });
+    json(profileAuthPath(agent, "personal"), { openai: oauth });
     const personal = await runtimeFor(agent, "personal");
     await importAccountKey(personal, agent, "openrouter");
     expect((await personal.getAuth("openrouter"))?.auth.apiKey).toBe("router-test-key");
-    expect(readJson(profileAuthPath(agent, "personal"))["openai-codex"]).toEqual(oauth);
+    expect(readJson(profileAuthPath(agent, "personal")).openai).toEqual(oauth);
     expect(readJson(profileAuthPath(agent, "work"))).toEqual({});
   });
 
@@ -191,16 +191,16 @@ describe("account initialization", () => {
   test("seeds a profile's managed key only when its store lacks one, and tolerates absent secrets", async () => {
     const { root, agent } = fixture();
     ensureProfileFiles(agent);
-    json(profileAuthPath(agent, "personal"), { "openai-codex": oauth });
+    json(profileAuthPath(agent, "personal"), { openai: oauth });
     const personal = await runtimeFor(agent, "personal");
     // No secret file yet (a machine where install.nu never ran): not an error; only Vertex is pinned.
     expect(await importMissingAccountKey(personal, agent, "personal")).toBeTrue();
-    expect(readJson(profileAuthPath(agent, "personal"))).toEqual({ "openai-codex": oauth, "google-vertex": vertex });
+    expect(readJson(profileAuthPath(agent, "personal"))).toEqual({ openai: oauth, "google-vertex": vertex });
     mkdirSync(join(root, "secrets"));
     json(join(root, "secrets/personal.json"), { openrouter: { apiKey: "router-test-key" } });
     expect(await importMissingAccountKey(personal, agent, "personal")).toBeTrue();
     expect((await personal.getAuth("openrouter"))?.auth.apiKey).toBe("router-test-key");
-    expect(readJson(profileAuthPath(agent, "personal"))["openai-codex"]).toEqual(oauth);
+    expect(readJson(profileAuthPath(agent, "personal")).openai).toEqual(oauth);
     // An existing login is never overwritten by the secret file.
     json(join(root, "secrets/personal.json"), { openrouter: { apiKey: "rotated-key" } });
     expect(await importMissingAccountKey(personal, agent, "personal")).toBeFalse();
@@ -310,7 +310,6 @@ describe("profile isolation using Pi's real credential store", () => {
     json(profileAuthPath(agent, "work"), {
       "google-vertex": { type: "api_key", key: "work-key" },
       "github-copilot": oauth,
-      "openai-codex": oauth,
       openai: { ...oauth, clientId: "fixture-client", scopes: ["chatgpt.tokens.use.direct"] },
     });
     const runtime = await runtimeFor(agent, "work");
@@ -321,7 +320,7 @@ describe("profile isolation using Pi's real credential store", () => {
     const work = runtime.getAvailableSnapshot();
     expect(work.some((m) => m.provider === "google-vertex")).toBeTrue();
     expect(work.some((m) => m.provider === "github-copilot" && m.id.startsWith("gpt-"))).toBeTrue();
-    expect(work.some((m) => m.provider === "openai-codex" || m.provider === "openrouter")).toBeFalse();
+    expect(work.some((m) => m.provider === "openrouter")).toBeFalse();
     expect(work.some((m) => m.id === "gpt-4o")).toBeFalse();
     expect(await runtime.getAvailable("openai")).toEqual([]);
     expect(await runtime.checkAuth("openai")).toBeUndefined();
@@ -347,11 +346,10 @@ describe("profile isolation using Pi's real credential store", () => {
     profile = "personal";
     installModelPolicy(runtime, () => profile); // hot reload must not stack a second restrictive closure
     const personal = runtime.getAvailableSnapshot();
-    expect(personal.some((m) => m.provider === "openai-codex")).toBeTrue();
     expect(personal.some((m) => m.provider === "openai")).toBeTrue();
-    expect(
-      personal.every((m) => ["openai", "openai-codex", "openrouter", "google-vertex"].includes(m.provider)),
-    ).toBeTrue();
+    expect(personal.every((m) => ["openai", "openrouter", "google-vertex"].includes(m.provider))).toBeTrue();
+    expect(await runtime.getAvailable("openai-codex")).toEqual([]);
+    await expect(runtime.getAuth("openai-codex", { apiKey: "explicit-bypass" })).rejects.toThrow("disabled");
     expect(personal.some((m) => m.provider === "google-vertex")).toBeTrue();
     await expect(runtime.getAuth("github-copilot")).rejects.toThrow("disabled");
     profile = "work";
@@ -364,16 +362,15 @@ describe("profile isolation using Pi's real credential store", () => {
     ensureProfileFiles(agent);
     json(profileAuthPath(agent, "work"), {
       "google-vertex": { type: "api_key", key: "work-key" },
-      "openai-codex": oauth,
       openai: { ...oauth, clientId: "fixture-client", scopes: ["chatgpt.tokens.use.direct"] },
     });
     const runtime = await runtimeFor(agent, "work");
-    const codex = runtime.getModels("openai-codex")[0];
+    const chatgpt = runtime.getModels("openai")[0];
     let profile: "work" | "personal" = "work";
     installModelPolicy(runtime, () => profile, []);
     await runtime.getAvailable();
     const google = runtime.getAvailableSnapshot().find((model) => model.provider === "google-vertex");
-    if (!google || !codex) throw new Error("Missing built-in test models");
+    if (!google || !chatgpt) throw new Error("Missing built-in test models");
     const settingsManager = SettingsManager.inMemory();
     const resourceLoader = new DefaultResourceLoader({
       cwd: agent,
@@ -391,7 +388,7 @@ describe("profile isolation using Pi's real credential store", () => {
       agentDir: agent,
       modelRuntime: runtime,
       model: google,
-      scopedModels: [{ model: codex }],
+      scopedModels: [{ model: chatgpt }],
       noTools: "all",
       settingsManager,
       resourceLoader,
@@ -401,32 +398,30 @@ describe("profile isolation using Pi's real credential store", () => {
     installScopedModelPolicy(AgentSession.prototype); // reload-safe
     try {
       expect(session.scopedModels).toEqual([]);
-      await expect(session.setModel(codex)).rejects.toThrow("No API key");
+      await expect(session.setModel(chatgpt)).rejects.toThrow("No API key");
       const cycled = await session.cycleModel();
       expect((cycled?.model ?? session.model)?.provider).toBe("google-vertex");
       if (cycled) expect(cycled.isScoped).toBeFalse();
       profile = "personal";
-      expect(session.scopedModels.map((entry) => entry.model.provider)).toEqual(["openai-codex"]);
-      await session.setModel(codex);
-      expect(session.model?.provider).toBe("openai-codex");
+      expect(session.scopedModels.map((entry) => entry.model.provider)).toEqual(["openai"]);
+      await session.setModel(chatgpt);
+      expect(session.model?.provider).toBe("openai");
     } finally {
       session.dispose();
     }
   });
 
   test("fallback never selects a provider from the other account, including empty profiles", () => {
-    const codex = { provider: "openai-codex", id: "gpt-test" } as Model<Api>;
-    const gemini = { provider: "google-vertex", id: "gemini-test" } as Model<Api>;
     const chatgpt = { provider: "openai", id: "gpt-test" } as Model<Api>;
+    const gemini = { provider: "google-vertex", id: "gemini-test" } as Model<Api>;
     const router = { provider: "openrouter", id: "router-test" } as Model<Api>;
     expect(chooseProfileModel([chatgpt], "work")).toBeUndefined();
     expect(chooseProfileModel([chatgpt], "personal")).toBe(chatgpt);
-    expect(chooseProfileModel([chatgpt, router, codex], "personal")).toBe(codex);
     expect(chooseProfileModel([chatgpt, router], "personal")).toBe(router);
     expect(chooseProfileModel([], "personal")).toBeUndefined();
-    expect(chooseProfileModel([codex, gemini], "work", codex)).toBe(gemini);
-    expect(chooseProfileModel([codex], "work")).toBeUndefined();
-    expect(chooseProfileModel([gemini, codex], "personal", codex)).toBe(codex);
+    expect(chooseProfileModel([chatgpt, gemini], "work", chatgpt)).toBe(gemini);
+    expect(chooseProfileModel([chatgpt], "work")).toBeUndefined();
+    expect(chooseProfileModel([gemini, chatgpt], "personal", chatgpt)).toBe(chatgpt);
   });
 });
 

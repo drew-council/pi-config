@@ -588,7 +588,7 @@ export default function modelControl(pi: ExtensionAPI) {
   };
 
   pi.registerCommand("log-me-in", {
-    description: "Account login menu: work (Copilot/Vertex AI/Claude) and personal (ChatGPT/Codex/OpenRouter)",
+    description: "Account login menu: work (Copilot/Vertex AI/Claude) and personal (ChatGPT/OpenRouter)",
     getArgumentCompletions: (prefix) =>
       ACCOUNTS.filter((a) => a.id.startsWith(prefix)).map((a) => ({
         value: a.id,

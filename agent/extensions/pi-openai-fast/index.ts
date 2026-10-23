@@ -8,8 +8,8 @@
  * Config precedence is project `.pi/extensions/pi-openai-fast.json` over
  * global `~/.pi/agent/extensions/pi-openai-fast.json`.
  *
- * Built-in support follows OpenAI Priority processing model families for
- * OpenAI/OpenAI Codex providers. `supportedModels` can add explicit
+ * Built-in support follows OpenAI Priority processing model families for the
+ * OpenAI provider. `supportedModels` can add explicit
  * provider/model-id pairs without replacing the built-in model detection.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -22,7 +22,7 @@ const FAST_FLAG = "fast";
 const FAST_CONFIG_BASENAME = "pi-openai-fast.json";
 const FAST_COMMAND_ARGS = ["on", "off", "status"] as const;
 const FAST_SERVICE_TIER = "priority";
-const OPENAI_PRIORITY_PROVIDERS = new Set(["openai", "openai-codex"]);
+const OPENAI_PRIORITY_PROVIDERS = new Set(["openai"]);
 const OPENAI_PRIORITY_MODEL_PATTERN = /^gpt-5(?:\.\d+)?(?:-(?:pro|mini|nano))?$/;
 const DEFAULT_SUPPORTED_MODEL_KEYS = [] as const;
 
@@ -229,7 +229,7 @@ function isFastSupportedModel(model: ExtensionContext["model"], supportedModels:
 }
 
 function describeSupportedModels(supportedModels: FastSupportedModel[]): string {
-  const builtIn = "OpenAI/OpenAI Codex GPT-5 priority models";
+  const builtIn = "OpenAI GPT-5 priority models";
   if (supportedModels.length === 0) {
     return builtIn;
   }

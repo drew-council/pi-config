@@ -16,6 +16,15 @@ export function humanizeSeconds(seconds: number | null | undefined): string {
   return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
 }
 
+export function formatTokens(count: number | null | undefined): string {
+  if (typeof count !== "number" || !Number.isFinite(count)) return "?";
+  if (count < 1_000) return count.toString();
+  if (count < 10_000) return `${(count / 1_000).toFixed(1)}k`;
+  if (count < 1_000_000) return `${Math.round(count / 1_000)}k`;
+  if (count < 10_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  return `${Math.round(count / 1_000_000)}M`;
+}
+
 export function formatMoney(value: number | null | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "?";
   if (Math.abs(value) >= 1) return `$${value.toFixed(2)}`;

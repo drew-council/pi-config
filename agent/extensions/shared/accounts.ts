@@ -14,7 +14,6 @@ export const ACCOUNTS = [
   { id: "google-vertex", profile: "work", shared: true, label: "Google Vertex AI · Sheer Health gcloud ADC" },
   { id: "claude-bridge", profile: "work", label: "Claude Code · external login" },
   { id: "fireworks", profile: "work", label: "Fireworks AI · API key" },
-  { id: "openai-codex", profile: "personal", label: "OpenAI Codex · subscription" },
   { id: "openrouter", profile: "personal", label: "OpenRouter · API key" },
   { id: "openai", profile: "personal", label: "OpenAI · ChatGPT subscription" },
 ] as const;

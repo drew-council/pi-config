@@ -1,6 +1,6 @@
 import { Box, type Component, Container, Spacer, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { type ProfileName, providerAllowed } from "../shared/accounts.js";
-import { clampPercent, formatMoney, formatResetTime, humanizeSeconds } from "./format.js";
+import { clampPercent, formatMoney, formatResetTime, formatTokens } from "./format.js";
 import type { Snapshot } from "./index.js";
 
 export interface UsageTheme {
@@ -110,30 +110,22 @@ export function profileView(snapshot: Snapshot, theme: UsageTheme, profile: Prof
     note(box, "Usage reporting not supported");
     column.addChild(box);
   }
-  if (providerAllowed(profile, "openai")) add("ChatGPT subscription (openai)", snapshot.chatgpt ?? null, () => {});
-  if (providerAllowed(profile, "openai-codex"))
-    add("OpenAI Codex · legacy usage", snapshot.codex, (box) => {
-      if (snapshot.codex?.status !== "ok") return;
-      const data = snapshot.codex.data;
-      for (const win of data.windows) {
-        box.addChild(new Spacer(1));
-        box.addChild(
-          metric(
-            theme,
-            `${win.label} window`,
-            100 - win.usedPercent,
-            win.resetAfterSeconds !== null ? `Resets in ${humanizeSeconds(win.resetAfterSeconds)}` : undefined,
-          ),
+  if (providerAllowed(profile, "openai"))
+    add("ChatGPT subscription (openai)", snapshot.chatgpt, (box) => {
+      if (snapshot.chatgpt?.status !== "ok") return;
+      note(box, `Plan usage · ${snapshot.chatgpt.data.usageUrl}`);
+      box.addChild(new Spacer(1));
+      note(box, "Local Pi activity (not plan quota)");
+      for (const [label, totals] of [
+        ["5h", snapshot.chatgpt.data.local.last5h],
+        ["7d", snapshot.chatgpt.data.local.last7d],
+      ] as const) {
+        note(
+          box,
+          totals.requests === 0
+            ? `${label} · no local activity`
+            : `${label} · ${totals.requests} request${totals.requests === 1 ? "" : "s"} · ${formatTokens(totals.totalTokens)} tokens · ${formatMoney(totals.cost)} est.`,
         );
-      }
-      if (data.rateLimitReached) box.addChild(text(theme.fg("error", "Rate limit reached")));
-      if (data.creditsSummary) note(box, data.creditsSummary);
-      if (data.spendControl) {
-        const spend = data.spendControl;
-        box.addChild(new Spacer(1));
-        box.addChild(metric(theme, "Spend control", 100 - spend.usedPercent));
-        note(box, `${spend.limit !== null ? formatMoney(spend.limit) : "Unknown limit"} · ${spend.source}`);
-        if (spend.resetAfterSeconds !== null) note(box, `Resets in ${humanizeSeconds(spend.resetAfterSeconds)}`);
       }
     });
   if (providerAllowed(profile, "openrouter"))

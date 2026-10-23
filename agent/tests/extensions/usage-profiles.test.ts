@@ -3,11 +3,18 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { _test, profileColumns, profileSnapshotLines, type Snapshot } from "../../extensions/usage/index.js";
+import {
+  _test,
+  applyLocalChatGPTUsage,
+  profileColumns,
+  profileSnapshotLines,
+  type Snapshot,
+} from "../../extensions/usage/index.js";
+import { appendLocalUsage, emptyLocalUsage, localUsagePath, readLocalUsage } from "../../extensions/usage/local.js";
 
 const theme = { fg: (_: string, text: string) => text, bold: (text: string) => text };
 const snapshot = {
-  codex: { status: "error" as const, message: "codex-only" },
+  chatgpt: { status: "error" as const, message: "chatgpt-only" },
   copilot: { status: "error" as const, message: "copilot-only" },
   claude: { status: "error" as const, message: "claude-only" },
   openrouter: { status: "error" as const, message: "router-only" },
@@ -20,9 +27,9 @@ test("usage columns contain only their profile's providers, even for errors", ()
   expect(work).toContain("copilot-only");
   expect(work).toContain("claude-only");
   expect(work).toContain("Google Vertex AI");
-  expect(work).not.toContain("codex-only");
+  expect(work).not.toContain("chatgpt-only");
   expect(work).not.toContain("router-only");
-  expect(personal).toContain("codex-only");
+  expect(personal).toContain("chatgpt-only");
   expect(personal).toContain("router-only");
   expect(personal).not.toContain("copilot-only");
   expect(personal).not.toContain("claude-only");
@@ -32,7 +39,7 @@ test("usage columns contain only their profile's providers, even for errors", ()
   }
   const lines = profileColumns(snapshot, theme, 80);
   expect(lines[0]).toMatch(/WORK.*│.*PERSONAL/);
-  expect(lines.join("\n")).toContain("codex-only");
+  expect(lines.join("\n")).toContain("chatgpt-only");
 });
 
 test("metrics keep percentages intact and reset times separate at normal terminal widths", () => {
@@ -64,18 +71,14 @@ test("metrics keep percentages intact and reset times separate at normal termina
 test("usage reads each owning profile without global or opposite-profile fallback", async () => {
   const dir = mkdtempSync(join(tmpdir(), "pi-usage-"));
   const save = (file: string, value: unknown) => writeFileSync(join(dir, file), JSON.stringify(value));
-  const codex = (access: string) => ({ type: "oauth", access });
   const copilot = (refresh: string) => ({ type: "oauth", refresh });
   try {
     mkdirSync(join(dir, "auth-profiles"));
     save("auth-profiles.json", { activeProfile: "work" });
-    save("auth.json", { "openai-codex": codex("global"), "github-copilot": copilot("global") });
-    save("auth-profiles/work.json", { "github-copilot": copilot("work"), "openai-codex": codex("wrong") });
-    save("auth-profiles/personal.json", { "openai-codex": codex("personal"), "github-copilot": copilot("wrong") });
-    expect((await _test.readCodexCredentials(dir))?.access).toBe("personal");
+    save("auth.json", { "github-copilot": copilot("global") });
+    save("auth-profiles/work.json", { "github-copilot": copilot("work") });
+    save("auth-profiles/personal.json", { "github-copilot": copilot("wrong") });
     expect((await _test.readCopilotCredentials(dir))?.refreshToken).toBe("work");
-    save("auth-profiles/personal.json", {});
-    expect(await _test.readCodexCredentials(dir)).toBeNull();
     save("auth-profiles/work.json", {});
     expect(await _test.readCopilotCredentials(dir)).toBeNull();
   } finally {
@@ -91,12 +94,11 @@ const directGrant = {
   clientId: "issued-client",
   scopes: ["openid", "chatgpt.tokens.use.direct"],
 };
-const legacyGrant = { type: "oauth", access: "legacy-token", expires: 4_000_000_000_000, accountId: "legacy-account" };
 
 test("direct ChatGPT grant status distinguishes subscription, invalid and API-key credentials", () => {
-  expect(_test.chatgptUsageFrom({ openai: directGrant })).toEqual({
-    status: "error",
-    message: expect.stringContaining("Usage unsupported"),
+  expect(_test.chatgptUsageFrom({ openai: directGrant })).toMatchObject({
+    status: "ok",
+    data: { usageUrl: "https://chatgpt.com/settings/usage", local: emptyLocalUsage() },
   });
   for (const openai of [
     { ...directGrant, clientId: undefined },
@@ -110,52 +112,66 @@ test("direct ChatGPT grant status distinguishes subscription, invalid and API-ke
   for (const auth of [null, {}, { openai: { type: "api_key", key: "api-key" } }])
     expect(_test.chatgptUsageFrom(auth)).toBeNull();
   const both = { ...snapshot, chatgpt: _test.chatgptUsageFrom({ openai: directGrant }) };
-  expect(profileSnapshotLines(both, theme, "work").join("\n")).not.toContain("direct ChatGPT");
+  expect(profileSnapshotLines(both, theme, "work").join("\n")).not.toContain("settings/usage");
   const personal = profileSnapshotLines(both, theme, "personal").join("\n");
-  expect(personal).toContain("legacy usage");
-  expect(personal).toContain("does not measure this grant");
+  expect(personal).toContain("ChatGPT subscription (openai)");
+  expect(personal).toContain("https://chatgpt.com/settings/usage");
 });
 
-test("wham only receives legacy credentials, including when both providers are saved", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "pi-chatgpt-usage-"));
-  const originalFetch = globalThis.fetch;
-  const requests: { url: string; headers: Headers }[] = [];
-  globalThis.fetch = (async (url, init) => {
-    requests.push({ url: String(url), headers: new Headers(init?.headers) });
-    return Response.json({
-      rate_limit: { primary_window: { used_percent: 25, limit_window_seconds: 18000, reset_after_seconds: 60 } },
-    });
-  }) as typeof fetch;
+test("local ChatGPT activity records request and token totals in 5h and 7d windows", () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-local-usage-"));
+  const now = Date.UTC(2026, 0, 1);
+  const usage = (input: number, output: number, totalTokens: number, cost: number) => ({
+    input,
+    output,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: cost },
+  });
   try {
-    mkdirSync(join(dir, "auth-profiles"));
-    // Wrong profile/global credentials must not be consulted either.
-    writeFileSync(join(dir, "auth.json"), JSON.stringify({ "openai-codex": legacyGrant }));
-    writeFileSync(join(dir, "auth-profiles/work.json"), JSON.stringify({ "openai-codex": legacyGrant }));
-    for (const auth of [
-      {},
-      { openai: directGrant },
-      { openai: { type: "api_key", key: "key" } },
-      { "openai-codex": { type: "api_key", access: "invalid" } },
-    ]) {
-      writeFileSync(join(dir, "auth-profiles/personal.json"), JSON.stringify(auth));
-      expect((await _test.fetchCodex(undefined, dir)).status).toBe("error");
-      expect(requests).toHaveLength(0);
-    }
-    for (const auth of [{ "openai-codex": legacyGrant }, { openai: directGrant, "openai-codex": legacyGrant }]) {
-      writeFileSync(join(dir, "auth-profiles/personal.json"), JSON.stringify(auth));
-      const result = await _test.fetchCodex(undefined, dir);
-      expect(result.status).toBe("ok");
-      if (result.status === "ok")
-        expect(result.data.windows).toEqual([{ label: "5h", usedPercent: 25, resetAfterSeconds: 60 }]);
-    }
-    expect(requests).toHaveLength(2);
-    for (const request of requests) {
-      expect(request.url).toBe("https://chatgpt.com/backend-api/wham/usage");
-      expect(request.headers.get("authorization")).toBe("Bearer legacy-token");
-      expect(request.headers.get("ChatGPT-Account-Id")).toBe("legacy-account");
-    }
+    appendLocalUsage(dir, usage(100, 20, 120, 0.5), now - 60 * 60 * 1000);
+    appendLocalUsage(dir, usage(200, 40, 240, 1), now - 6 * 60 * 60 * 1000);
+    appendLocalUsage(dir, usage(300, 60, 360, 2), now - 8 * 24 * 60 * 60 * 1000);
+    writeFileSync(localUsagePath(dir), 'not json\n{"at":"bad"}\n', { flag: "a" });
+
+    const summary = readLocalUsage(dir, now);
+    expect(summary.last5h).toMatchObject({ requests: 1, totalTokens: 120, cost: 0.5 });
+    expect(summary.last7d).toMatchObject({ requests: 2, totalTokens: 360, cost: 1.5 });
   } finally {
-    globalThis.fetch = originalFetch;
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("ChatGPT usage renders local activity without claiming plan quota", () => {
+  const local = {
+    last5h: {
+      requests: 2,
+      input: 10_000,
+      output: 2_345,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 12_345,
+      cost: 0.42,
+    },
+    last7d: {
+      requests: 5,
+      input: 20_000,
+      output: 4_000,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 24_000,
+      cost: 0.84,
+    },
+  };
+  const withLocal = applyLocalChatGPTUsage(
+    { ...snapshot, chatgpt: _test.chatgptUsageFrom({ openai: directGrant }) },
+    local,
+  );
+  const personal = profileSnapshotLines(withLocal, theme, "personal").join("\n");
+  expect(personal).toContain("local Pi activity (not plan quota)");
+  expect(personal).toContain("2 requests");
+  expect(personal).toContain("12k tokens");
+  expect(personal).toContain("$0.4200 est.");
+  expect(personal).toContain("https://chatgpt.com/settings/usage");
 });
