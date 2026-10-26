@@ -50,6 +50,7 @@
               gh
               git
               imagemagick
+              mask
               nushell
               oxfmt
               oxlint
