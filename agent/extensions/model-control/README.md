@@ -5,18 +5,22 @@ An omitted model `type` means chat, as in Pi's provider configuration. Unknown
 model types fail closed.
 
 `NON_CHAT_ALLOWLISTS` explicitly defines separate classifier and image allowlists
-for work and personal. **Both lists are empty in both profiles by user decision.**
-The capability infrastructure is installed, but every non-chat model is intentionally
-disabled pending explicit authorization. This is not a catalog defect; do not
-fall back to a chat model or another provider.
+for work and personal. Each entry is authorized by user decision:
 
-Pi 1.0.4's bundled catalogs expose classifier and image models through OpenRouter
-(the only currently allowed provider with bundled non-chat entries). This does
-not authorize them. TypeSafe direct, Google AI Studio, Cloudflare, llama.cpp and
-other disabled providers remain disabled. Work data must not be sent through
-personal OpenRouter or any other personal service; the existing Vertex ZDR/BAA
-boundary and profile-specific credentials remain unchanged. No providers,
-credentials, chat defaults, or approval behavior are changed by this policy.
+| Profile | Classifier | Why |
+|---|---|---|
+| work | `fireworks/accounts/fireworks/models/rune` | Work Fireworks key. pi-sheer's `fireworks-rune` extension adds the model. |
+| personal | `openrouter/typesafe/jev-1.14` | Personal OpenRouter key; the account is ZDR-only and OpenRouter lists TypeSafe's endpoint as ZDR. |
+
+Both image lists are empty. Every other non-chat model stays disabled; do not
+fall back to a chat model, another version, a router alias, or another provider.
+
+Catalog presence does not authorize a model. TypeSafe direct, Google AI Studio,
+Cloudflare, llama.cpp and other disabled providers remain disabled. Work data
+must not be sent through personal OpenRouter or any other personal service; the
+existing Vertex ZDR/BAA boundary and profile-specific credentials remain
+unchanged. No credentials, chat defaults, or approval behavior are changed by
+this policy.
 
 The same policy applies to typed and combined catalog discovery, model-object
 authentication, and actual `classify`/`generateImages` runtime entrypoints used by

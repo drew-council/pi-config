@@ -19,10 +19,12 @@ export const MODEL_BLACKLIST = [
 
 type ModelLike = { provider: string; id: string; name?: string; type?: string };
 
-/** Non-chat capabilities remain disabled until explicitly authorized, in both profiles. */
+/** Non-chat models are disabled unless explicitly authorized here, per profile. */
 export const NON_CHAT_ALLOWLISTS: Record<ProfileName, Record<"classifier" | "image", readonly string[]>> = {
-  work: { classifier: [], image: [] },
-  personal: { classifier: [], image: [] },
+  // Added to the fireworks provider by pi-sheer's fireworks-rune extension.
+  work: { classifier: ["fireworks/accounts/fireworks/models/rune"], image: [] },
+  // Pinned; OpenRouter lists TypeSafe's endpoint for it as zero data retention.
+  personal: { classifier: ["openrouter/typesafe/jev-1.14"], image: [] },
 };
 
 export function modelAllowed(

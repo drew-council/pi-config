@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { AnyModel, Api, Model } from "@earendil-works/pi-ai";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { installModelPolicy, NON_CHAT_ALLOWLISTS } from "../../extensions/model-control/policy.js";
+import { installModelPolicy, modelAllowed, NON_CHAT_ALLOWLISTS } from "../../extensions/model-control/policy.js";
 import type { ProfileName } from "../../extensions/shared/accounts.js";
 
 const chat = { provider: "google-vertex", id: "gemini-3.8-flash", type: "chat" } as Model<Api>;
@@ -65,9 +65,26 @@ function fixture(profile: ProfileName, retainedChatPolicy = false) {
   };
 }
 
-test("both profiles explicitly deny typed discovery while retaining their chat catalog", async () => {
+test("each profile authorizes only its own pinned classifier", () => {
+  expect(NON_CHAT_ALLOWLISTS).toEqual({
+    work: { classifier: ["fireworks/accounts/fireworks/models/rune"], image: [] },
+    personal: { classifier: ["openrouter/typesafe/jev-1.14"], image: [] },
+  });
+  const rune = { provider: "fireworks", id: "accounts/fireworks/models/rune", type: "classifier" };
+  const jev = { provider: "openrouter", id: "typesafe/jev-1.14", type: "classifier" };
+  expect(modelAllowed(rune, "work")).toBe(true);
+  expect(modelAllowed(jev, "work")).toBe(false);
+  expect(modelAllowed(jev, "personal")).toBe(true);
+  expect(modelAllowed(rune, "personal")).toBe(false);
+  for (const id of ["~typesafe/jev-latest", "typesafe/jev-router", "typesafe/jev-1.13"]) {
+    expect(modelAllowed({ ...jev, id }, "personal")).toBe(false);
+  }
+  expect(modelAllowed({ ...rune, id: "accounts/fireworks/routers/rune" }, "work")).toBe(false);
+  expect(modelAllowed({ ...jev, type: "image" }, "personal")).toBe(false);
+});
+
+test("both profiles deny unlisted typed models while retaining their chat catalog", async () => {
   for (const profile of ["work", "personal"] as const) {
-    expect(NON_CHAT_ALLOWLISTS[profile]).toEqual({ classifier: [], image: [] });
     const { target } = fixture(profile);
     for (const entry of [classifier, image]) {
       expect(target.getModelsOfType(entry.type as "classifier" | "image")).toEqual([]);
