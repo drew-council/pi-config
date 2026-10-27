@@ -297,7 +297,7 @@ def main [
   say "Applying Pi-managed git package patches"
   ^nu ($repo | path join "scripts" "patch-git-packages.nu")
 
-  say "Generating Pi, Codex, and Claude Code skills from ./skills"
+  say "Generating Pi, Codex, and Claude Code skills from ./skills and copying agent/AGENTS.md"
   ^bun ($repo | path join "scripts" "sync-skills.ts")
 
   say "Initializing account profiles (browser logins remain available through /log-me-in)"

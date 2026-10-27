@@ -27,6 +27,9 @@
  * directories whose skill no longer exists, or whose source is unavailable on this machine, are
  * removed; a skill that fails for any other reason (bad frontmatter, a patch that no longer
  * applies) keeps its previous output and makes the script exit non-zero.
+ *
+ * ~/.pi/agent/AGENTS.md, which Pi reads in place, is also copied over Claude Code's CLAUDE.md and
+ * Codex's AGENTS.md.
  */
 import { chmod, copyFile, cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -40,6 +43,12 @@ const TARGET_CONFIG_DIRS: Record<Target, string> = {
   pi: ".pi/agent",
   codex: ".codex",
   claude: ".claude",
+};
+
+/** Each consumer's global instructions file, relative to its config directory. */
+const INSTRUCTIONS_FILES: Partial<Record<Target, string>> = {
+  codex: "AGENTS.md",
+  claude: "CLAUDE.md",
 };
 
 const SPEC_FIELDS = ["name", "description", "license", "compatibility", "metadata", "allowed-tools"];
@@ -99,6 +108,8 @@ export interface SyncOptions {
   sourceDir: string;
   home: string;
   cacheDir: string;
+  /** Copied over each consumer's global instructions file when set. */
+  instructionsFile?: string;
   log?: (message: string) => void;
 }
 
@@ -491,7 +502,36 @@ async function syncWith(
     log(`${skill.name}: ${skill.origin} -> ${targets.join(", ") || "nothing"}`);
   }
   for (const removed of result.removed) log(`removed ${removed}`);
+
+  if (options.instructionsFile)
+    await copyInstructions(resolve(options.instructionsFile), options.home, result, fail, log);
   return result;
+}
+
+async function copyInstructions(
+  source: string,
+  home: string,
+  result: SyncResult,
+  fail: (message: string) => void,
+  log: (message: string) => void,
+): Promise<void> {
+  const contents = await readFile(source).catch(() => undefined);
+  if (contents === undefined) {
+    fail(`${source} does not exist`);
+    return;
+  }
+  for (const target of TARGETS) {
+    const file = INSTRUCTIONS_FILES[target];
+    const configDir = join(home, TARGET_CONFIG_DIRS[target]);
+    if (!file || !(await exists(configDir))) continue;
+    const dest = join(configDir, file);
+    // Renaming over `dest` replaces it even if it is a symlink, instead of writing through it.
+    const staged = `${dest}.sync-staging`;
+    await writeFile(staged, contents);
+    await rename(staged, dest);
+    result.written.push(`${target}/${file}`);
+    log(`${target}/${file}: copied from ${source}`);
+  }
 }
 
 if (import.meta.main) {
@@ -499,6 +539,7 @@ if (import.meta.main) {
   const result = await syncSkills({
     sourceDir: resolve(import.meta.dir, "..", "skills"),
     home,
+    instructionsFile: resolve(import.meta.dir, "..", "agent", "AGENTS.md"),
     cacheDir: join(process.env.XDG_CACHE_HOME || join(home, ".cache"), "pi-skills"),
     log: (message) => console.log(`    ${message}`),
   });

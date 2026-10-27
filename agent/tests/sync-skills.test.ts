@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -217,5 +217,29 @@ test("sync removes stale and unavailable skills but never unmanaged directories"
     const conflict = await syncSkills(options);
     assert.ok(conflict.errors.some((error) => /hand-made exists but is not managed/.test(error)));
     assert.equal(await readFile(join(skillsDir, "hand-made", "SKILL.md"), "utf8"), "---\ndescription: Mine.\n---\n");
+  });
+});
+
+test("sync copies global instructions over existing files and symlinks", async () => {
+  await withSandbox(async (root) => {
+    const home = join(root, "home");
+    const instructionsFile = join(root, "AGENTS.md");
+    const linkTarget = join(root, "elsewhere.md");
+    const options = { sourceDir: join(root, "skills"), home, cacheDir: join(root, "cache"), instructionsFile };
+    await mkdir(options.sourceDir);
+    await write(instructionsFile, "Be brief.\n");
+    await write(join(home, ".claude", "CLAUDE.md"), "Mine.\n");
+    await write(linkTarget, "Elsewhere.\n");
+    await mkdir(join(home, ".codex"), { recursive: true });
+    await symlink(linkTarget, join(home, ".codex", "AGENTS.md"));
+
+    const result = await syncSkills(options);
+    assert.deepEqual(result.errors, []);
+    assert.deepEqual(result.written.sort(), ["claude/CLAUDE.md", "codex/AGENTS.md"]);
+    for (const dest of [join(home, ".claude", "CLAUDE.md"), join(home, ".codex", "AGENTS.md")]) {
+      assert.ok(!(await lstat(dest)).isSymbolicLink());
+      assert.equal(await readFile(dest, "utf8"), "Be brief.\n");
+    }
+    assert.equal(await readFile(linkTarget, "utf8"), "Elsewhere.\n");
   });
 });
