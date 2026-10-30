@@ -272,6 +272,8 @@ export async function runProfileSwitchTransaction(options: {
   }
 }
 
+const startupPairMarker = Symbol.for("pi.model-control.startup-pair");
+
 export default function modelControl(pi: ExtensionAPI) {
   const agentDir = getAgentDir();
   ensureProfileFiles(agentDir);
@@ -289,6 +291,12 @@ export default function modelControl(pi: ExtensionAPI) {
   const startupHasExplicitPair = Boolean(args?.provider || args?.model || args?.thinking);
   const startupExplicitThinking = args?.thinking ?? thinkingFromModelArgument(args?.model);
   const startupRestoresSession = Boolean(args?.continue || args?.resume || args?.session || args?.fork);
+  // An explicit startup pair replaces the profile default for this process's new sessions.
+  // T3 Code relies on this: it starts each thread with new_session after launching `pi --mode rpc`.
+  // Pi reloads extensions per session, so the pair lives on globalThis.
+  const startupPairHolder = globalThis as {
+    [startupPairMarker]?: { profile: ProfileName; pair: ModelEffortPreference };
+  };
 
   process.env.PI_AUTH_PROFILE = activeProfile;
 
@@ -422,13 +430,20 @@ export default function modelControl(pi: ExtensionAPI) {
         restoresSession: startupRestoresSession,
         inheritedProfile: inheritedProfile === activeProfile,
       });
-      if (event.reason === "new" || !preserve) {
+      const startupPair = startupPairHolder[startupPairMarker];
+      if (event.reason === "new" && startupPair?.profile === activeProfile) {
+        await restorePair(ctx, startupPair.pair);
+      } else if (event.reason === "new" || !preserve) {
         await applyDefault(ctx, activeProfile);
       } else {
         if (event.reason === "startup" && startupHasExplicitPair && !startupExplicitThinking && ctx.model) {
           await applyModelEffortPair(pi, ctx, ctx.model, readProfileDefault(agentDir, activeProfile).thinking);
         }
         await ensurePair(ctx);
+        if (event.reason === "startup" && startupHasExplicitPair) {
+          const pair = currentPair(ctx);
+          if (pair) startupPairHolder[startupPairMarker] = { profile: activeProfile, pair };
+        }
       }
     } catch (error) {
       ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
