@@ -1,17 +1,13 @@
 {
-  "/Users/drew/.herdr/worktrees/sheer": true,
-  "/Users/drew/.pi": true,
-  "/Users/drew/nixconf": true,
-  "/Users/drew/personal/tuicr": true,
-  "/Users/drew/personal/zed": true,
-  "/Users/drew/work/sheer": true,
-  "/home/drew/.herdr/worktrees/nixconf/macos": true,
-  "/home/drew/.herdr/worktrees/sheer": true,
-  "/home/drew/.pi": true,
-  "/home/drew/dirac": true,
-  "/home/drew/nixconf": true,
-  "/home/drew/personal/dnd/light-of-xaryxis": true,
-  "/home/drew/personal/tuicr": true,
-  "/home/drew/personal/zed": true,
-  "/home/drew/work/sheer": true
+  "~/.herdr/worktrees/nixconf/macos": true,
+  "~/.herdr/worktrees/sheer": true,
+  "~/.pi": true,
+  "~/.t3/worktrees/sheer": true,
+  "~/dirac": true,
+  "~/nixconf": true,
+  "~/personal/dnd/light-of-xaryxis": true,
+  "~/personal/t3code": true,
+  "~/personal/tuicr": true,
+  "~/personal/zed": true,
+  "~/work/sheer": true
 }
