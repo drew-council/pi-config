@@ -46,3 +46,4 @@ agent/models-store.json
 
 /agent/pi-subagents/last-seen-version.json
 /agent/mcp-auth.json
+/agent/claude-bridge/sessions
