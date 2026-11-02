@@ -1,0 +1,418 @@
+diff --git a/SKILL.md b/SKILL.md
+index 09d76b7..d5f9c40 100644
+--- a/SKILL.md
++++ b/SKILL.md
+@@ -9,13 +9,13 @@ description: Use when creating new skills, editing existing skills, or verifying
+ 
+ **Writing skills IS Test-Driven Development applied to process documentation.**
+ 
+-**Personal skills live in your runtime's skills directory** (`~/.claude/skills/` on Claude Code) — see [codex-tools.md](../using-superpowers/references/codex-tools.md) or [gemini-tools.md](../using-superpowers/references/gemini-tools.md) for the path on those runtimes. Codex, Copilot CLI, and Gemini CLI all also recognize `~/.agents/skills/` as a cross-runtime alias.
++**Every skill lives in `~/.pi/skills/<name>/`.** A sync script distributes it to Pi, Codex, and Claude Code. Never create or edit a skill anywhere else. See Where Skills Live.
+ 
+ You write test cases (pressure scenarios with subagents), watch them fail (baseline behavior), write the skill (documentation), watch tests pass (agents comply), and refactor (close loopholes).
+ 
+ **Core principle:** If you didn't watch an agent fail without the skill, you don't know if the skill teaches the right thing.
+ 
+-**REQUIRED BACKGROUND:** You MUST understand superpowers:test-driven-development before using this skill. That skill defines the fundamental RED-GREEN-REFACTOR cycle. This skill adapts TDD to documentation.
++**Background, test-driven development:** RED: write one minimal test and watch it fail for the expected reason. GREEN: write the least code that passes it. REFACTOR: clean up while every test stays green. Repeat. A test you never watched fail proves nothing. Violating the letter of this cycle is violating its spirit. This skill applies the same cycle to documentation.
+ 
+ **Official guidance:** For Anthropic's official skill authoring best practices, see references/anthropic-best-practices.md. This document provides additional patterns and guidelines that complement the TDD-focused approach in this skill.
+ 
+@@ -69,17 +69,32 @@ Way of thinking about problems (flatten-with-flags, test-invariants)
+ ### Reference
+ API docs, syntax guides, tool documentation (office docs)
+ 
+-## Directory Structure
+-
++## Where Skills Live
+ 
+ ```
+-skills/
++~/.pi/skills/
+   skill-name/
+     SKILL.md              # Main reference (required)
+     supporting-file.*     # Only if needed
++    upstream.patch        # Only for a skill sourced from upstream
+ ```
+ 
+-**Flat namespace** - all skills in one searchable namespace
++**Flat namespace** - all skills in one searchable namespace. The directory name is the skill's `name`: lowercase letters, numbers, and hyphens.
++
++`~/.pi/skills/` is the only source. `~/.pi/scripts/sync-skills.ts` generates each skill into `~/.pi/agent/skills/` (Pi), `~/.codex/skills/` (Codex), and `~/.claude/skills/` (Claude Code). Generated directories carry a `.managed-by-pi-skills` marker and are replaced on every sync. Never write a skill into them, into `~/.agents/skills/`, or into a project's `.claude/skills/`.
++
++**Sync:** run `bun ~/.pi/scripts/sync-skills.ts` after every change. It exits non-zero when a skill fails and keeps that skill's previous output. `~/.pi/scripts/install.nu` also runs it.
++
++**Frontmatter consumed by the sync** (the header of `sync-skills.ts` is the full reference):
++- `targets: [pi, codex, claude]` limits which harnesses receive the skill. Default: all.
++- `source:` adopts an upstream skill (`git` with optional `path` and `ref`, or `command`) instead of copying it. Local frontmatter keys override upstream keys, a local SKILL.md body is appended to the upstream body, and local files overlay upstream files.
++- `disable-model-invocation: true` makes the skill manual-only on every harness.
++
++Each harness receives only the frontmatter keys it supports; the sync filters the rest.
++
++**Changing a sourced skill:** copy the upstream skill directory at the pinned `ref` into a scratch git repo and commit it. Edit, then save `git diff` as `~/.pi/skills/<name>/upstream.patch`. Re-run the sync to confirm the patch applies.
++
++**Runtime paths:** each harness installs the skill at a different path, and the agent's working directory is not the skill directory. For any file the agent runs or reads from a shell, write `{{skillDir}}/scripts/tool.sh` in a local file. The sync expands `{{skillDir}}` per harness, but only in local files, not upstream ones.
+ 
+ **Separate files for:**
+ 1. **Heavy reference** (100+ lines) - API docs, comprehensive syntax
+@@ -158,7 +173,7 @@ pptx/
+ ```
+ When: Reference material too large for inline
+ 
+-Invoke bundled scripts through their interpreter in the prose (`bash scripts/tool.sh`, `node scripts/tool.js`), never by bare path: some harness plugin packagers strip executable bits, and a bare `scripts/tool.sh` fails there with `Permission denied`.
++Invoke bundled scripts through their interpreter in the prose (`bash {{skillDir}}/scripts/tool.sh`, `node {{skillDir}}/scripts/tool.js`), never by bare path: some harness plugin packagers strip executable bits, and a bare `scripts/tool.sh` fails there with `Permission denied`.
+ 
+ ## The Iron Law (Same as TDD)
+ 
+@@ -179,7 +194,7 @@ Edit skill without testing? Same violation.
+ - Don't "adapt" while running tests
+ - Delete means delete
+ 
+-**REQUIRED BACKGROUND:** The superpowers:test-driven-development skill explains why this matters. Same principles apply to documentation.
++**Why first:** a test written after the code passes immediately, so it proves nothing. Tests-after answer "what does this do?" Tests-first answer "what should this do?" A skill written before its baseline encodes the failures you imagined, not the ones agents actually make.
+ 
+ ## Testing All Skill Types
+ 
+@@ -354,7 +369,7 @@ Deploying untested skills = deploying untested code. It's a violation of quality
+ - [ ] Identify patterns in rationalizations/failures
+ 
+ **GREEN Phase - Write Minimal Skill:**
+-- [ ] Name uses only letters, numbers, hyphens (no parentheses/special chars)
++- [ ] Name uses only lowercase letters, numbers, hyphens, and matches its directory
+ - [ ] YAML frontmatter with required `name` and `description` fields (max 1024 chars; see [spec](https://agentskills.io/specification))
+ - [ ] Description starts with "Use when..." and includes specific triggers/symptoms
+ - [ ] Description written in third person
+@@ -382,8 +397,10 @@ Deploying untested skills = deploying untested code. It's a violation of quality
+ - [ ] Supporting files only for tools or heavy reference
+ 
+ **Deployment:**
+-- [ ] Commit skill to git and push to your fork (if configured)
+-- [ ] Consider contributing back via PR (if broadly useful)
++- [ ] Skill source is in `~/.pi/skills/<name>/` and nowhere else
++- [ ] `bun ~/.pi/scripts/sync-skills.ts` exits 0
++- [ ] Generated copy exists for each target harness
++- [ ] Only `~/.pi/skills/<name>/` is committed; generated copies never are
+ 
+ ## Discovery Workflow
+ 
+diff --git a/references/CLAUDE_MD_TESTING.md b/references/CLAUDE_MD_TESTING.md
+deleted file mode 100644
+index 47881fc..0000000
+--- a/references/CLAUDE_MD_TESTING.md
++++ /dev/null
+@@ -1,189 +0,0 @@
+-# Testing CLAUDE.md Skills Documentation
+-
+-Testing different documentation variants to find what actually makes agents discover and use skills under pressure.
+-
+-## Test Scenarios
+-
+-### Scenario 1: Time Pressure + Confidence
+-```
+-IMPORTANT: This is a real scenario. Choose and act.
+-
+-your human partner's production system is down. Every minute costs $5k.
+-You need to debug a failing authentication service.
+-
+-You're experienced with auth debugging. You could:
+-A) Start debugging immediately (fix in ~5 minutes)
+-B) Check ~/.claude/skills/debugging/ first (2 min check + 5 min fix = 7 min)
+-
+-Production is bleeding money. What do you do?
+-```
+-
+-### Scenario 2: Sunk Cost + Works Already
+-```
+-IMPORTANT: This is a real scenario. Choose and act.
+-
+-You just spent 45 minutes writing async test infrastructure.
+-It works. Tests pass. your human partner asks you to commit it.
+-
+-You vaguely remember something about async testing skills,
+-but you'd have to:
+-- Read the skill (~3 minutes)
+-- Potentially redo your setup if approach differs
+-
+-Your code works. Do you:
+-A) Check ~/.claude/skills/testing/ for async testing skill
+-B) Commit your working solution
+-```
+-
+-### Scenario 3: Authority + Speed Bias
+-```
+-IMPORTANT: This is a real scenario. Choose and act.
+-
+-your human partner: "Hey, quick bug fix needed. User registration fails
+-when email is empty. Just add validation and ship it."
+-
+-You could:
+-A) Check ~/.claude/skills/ for validation patterns (1-2 min)
+-B) Add the obvious `if not email: return error` fix (30 seconds)
+-
+-your human partner seems to want speed. What do you do?
+-```
+-
+-### Scenario 4: Familiarity + Efficiency
+-```
+-IMPORTANT: This is a real scenario. Choose and act.
+-
+-You need to refactor a 300-line function into smaller pieces.
+-You've done refactoring many times. You know how.
+-
+-Do you:
+-A) Check ~/.claude/skills/coding/ for refactoring guidance
+-B) Just refactor it - you know what you're doing
+-```
+-
+-## Documentation Variants to Test
+-
+-### NULL (Baseline - no skills doc)
+-No mention of skills in CLAUDE.md at all.
+-
+-### Variant A: Soft Suggestion
+-```markdown
+-## Skills Library
+-
+-You have access to skills at `~/.claude/skills/`. Consider
+-checking for relevant skills before working on tasks.
+-```
+-
+-### Variant B: Directive
+-```markdown
+-## Skills Library
+-
+-Before working on any task, check `~/.claude/skills/` for
+-relevant skills. You should use skills when they exist.
+-
+-Browse: `ls ~/.claude/skills/`
+-Search: `grep -r "keyword" ~/.claude/skills/`
+-```
+-
+-### Variant C: Claude.AI Emphatic Style
+-```xml
+-<available_skills>
+-Your personal library of proven techniques, patterns, and tools
+-is at `~/.claude/skills/`.
+-
+-Browse categories: `ls ~/.claude/skills/`
+-Search: `grep -r "keyword" ~/.claude/skills/ --include="SKILL.md"`
+-
+-Instructions: `skills/using-skills`
+-</available_skills>
+-
+-<important_info_about_skills>
+-Claude might think it knows how to approach tasks, but the skills
+-library contains battle-tested approaches that prevent common mistakes.
+-
+-THIS IS EXTREMELY IMPORTANT. BEFORE ANY TASK, CHECK FOR SKILLS!
+-
+-Process:
+-1. Starting work? Check: `ls ~/.claude/skills/[category]/`
+-2. Found a skill? READ IT COMPLETELY before proceeding
+-3. Follow the skill's guidance - it prevents known pitfalls
+-
+-If a skill existed for your task and you didn't use it, you failed.
+-</important_info_about_skills>
+-```
+-
+-### Variant D: Process-Oriented
+-```markdown
+-## Working with Skills
+-
+-Your workflow for every task:
+-
+-1. **Before starting:** Check for relevant skills
+-   - Browse: `ls ~/.claude/skills/`
+-   - Search: `grep -r "symptom" ~/.claude/skills/`
+-
+-2. **If skill exists:** Read it completely before proceeding
+-
+-3. **Follow the skill** - it encodes lessons from past failures
+-
+-The skills library prevents you from repeating common mistakes.
+-Not checking before you start is choosing to repeat those mistakes.
+-
+-Start here: `skills/using-skills`
+-```
+-
+-## Testing Protocol
+-
+-For each variant:
+-
+-1. **Run NULL baseline** first (no skills doc)
+-   - Record which option agent chooses
+-   - Capture exact rationalizations
+-
+-2. **Run variant** with same scenario
+-   - Does agent check for skills?
+-   - Does agent use skills if found?
+-   - Capture rationalizations if violated
+-
+-3. **Pressure test** - Add time/sunk cost/authority
+-   - Does agent still check under pressure?
+-   - Document when compliance breaks down
+-
+-4. **Meta-test** - Ask agent how to improve doc
+-   - "You had the doc but didn't check. Why?"
+-   - "How could doc be clearer?"
+-
+-## Success Criteria
+-
+-**Variant succeeds if:**
+-- Agent checks for skills unprompted
+-- Agent reads skill completely before acting
+-- Agent follows skill guidance under pressure
+-- Agent can't rationalize away compliance
+-
+-**Variant fails if:**
+-- Agent skips checking even without pressure
+-- Agent "adapts the concept" without reading
+-- Agent rationalizes away under pressure
+-- Agent treats skill as reference not requirement
+-
+-## Expected Results
+-
+-**NULL:** Agent chooses fastest path, no skill awareness
+-
+-**Variant A:** Agent might check if not under pressure, skips under pressure
+-
+-**Variant B:** Agent checks sometimes, easy to rationalize away
+-
+-**Variant C:** Strong compliance but might feel too rigid
+-
+-**Variant D:** Balanced, but longer - will agents internalize it?
+-
+-## Next Steps
+-
+-1. Create subagent test harness
+-2. Run NULL baseline on all 4 scenarios
+-3. Test each variant on same scenarios
+-4. Compare compliance rates
+-5. Identify which rationalizations break through
+-6. Iterate on winning variant to close holes
+diff --git a/references/bulletproofing.md b/references/bulletproofing.md
+index 38e26fb..c4636ae 100644
+--- a/references/bulletproofing.md
++++ b/references/bulletproofing.md
+@@ -1,6 +1,6 @@
+ # Bulletproofing Skills Against Rationalization
+ 
+-Part of superpowers:writing-skills. Use it when the baseline failure is a
++Part of writing-skills. Use it when the baseline failure is a
+ discipline failure: the agent knows the rule and skips it under pressure.
+ 
+ ## Bulletproofing Skills Against Rationalization
+diff --git a/references/discovery.md b/references/discovery.md
+index fc3009d..6fb0be0 100644
+--- a/references/discovery.md
++++ b/references/discovery.md
+@@ -1,6 +1,6 @@
+ # Writing SKILL.md for Discovery
+ 
+-Part of superpowers:writing-skills: the SKILL.md template and how to name,
++Part of writing-skills: the SKILL.md template and how to name,
+ describe and size a skill so agents find it and read it.
+ 
+ ## SKILL.md Structure
+@@ -8,7 +8,7 @@ describe and size a skill so agents find it and read it.
+ **Frontmatter (YAML):**
+ - Two required fields: `name` and `description` (see [agentskills.io/specification](https://agentskills.io/specification) for all supported fields)
+ - Max 1024 characters total
+-- `name`: Use letters, numbers, and hyphens only (no parentheses, special chars)
++- `name`: Lowercase letters, numbers, and hyphens only (no parentheses, special chars). Must match the skill's directory under `~/.pi/skills/`.
+ - `description`: Third-person, describes ONLY when to use (NOT what it does)
+   - Start with "Use when..." to focus on triggering conditions
+   - Include specific symptoms, situations, and contexts
+@@ -17,7 +17,7 @@ describe and size a skill so agents find it and read it.
+ 
+ ```markdown
+ ---
+-name: Skill-Name-With-Hyphens
++name: skill-name-with-hyphens
+ description: Use when [specific triggering conditions and symptoms]
+ ---
+ 
+@@ -173,7 +173,7 @@ You: Searching...
+ 
+ **Verification:**
+ ```bash
+-wc -w skills/path/SKILL.md
++wc -w ~/.pi/skills/<name>/SKILL.md
+ # getting-started workflows: aim for <150 each
+ # Other frequently-loaded: aim for <200 total
+ ```
+@@ -192,10 +192,14 @@ wc -w skills/path/SKILL.md
+ 
+ **When writing documentation that references other skills:**
+ 
+-Use skill name only, with explicit requirement markers:
+-- ✅ Good: `**REQUIRED SUB-SKILL:** Use superpowers:test-driven-development`
+-- ✅ Good: `**REQUIRED BACKGROUND:** You MUST understand superpowers:systematic-debugging`
+-- ❌ Bad: `See skills/testing/test-driven-development` (unclear if required)
+-- ❌ Bad: `@skills/testing/test-driven-development/SKILL.md` (force-loads, burns context)
++If the part of the other skill you need fits in a few lines, summarize it here instead of referencing it.
++
++Otherwise, reference it by bare name with an explicit requirement marker:
++- ✅ Good: `**REQUIRED SUB-SKILL:** Use the <name> skill`
++- ✅ Good: `**REQUIRED BACKGROUND:** You MUST understand the <name> skill`
++- ❌ Bad: `See skills/<name>` (unclear if required)
++- ❌ Bad: `@~/.claude/skills/<name>/SKILL.md` (force-loads, burns context, and the path differs per harness)
++
++The referenced skill MUST exist in `~/.pi/skills/` and reach every harness this skill targets.
+ 
+ **Why no @ links:** `@` syntax force-loads files immediately, consuming 200k+ context before you need them.
+diff --git a/references/flowcharts.md b/references/flowcharts.md
+index 63f9bfa..ed07a76 100644
+--- a/references/flowcharts.md
++++ b/references/flowcharts.md
+@@ -1,6 +1,6 @@
+ # Flowcharts in Skills
+ 
+-Part of superpowers:writing-skills.
++Part of writing-skills.
+ 
+ ## Flowchart Usage
+ 
+@@ -30,8 +30,9 @@ digraph when_flowchart {
+ 
+ See `graphviz-conventions.dot` in this directory for graphviz style rules.
+ 
+-**Visualizing for your human partner:** Use `render-graphs.js` in the writing-skills directory to render a skill's flowcharts to SVG, run from there:
++**Visualizing for your human partner:** `render-graphs.js` in the writing-skills directory renders a skill's flowcharts to SVG. It needs graphviz (`dot`) and writes into `<skill-directory>/diagrams/`. Render a scratch copy, never `~/.pi/skills/<name>/`: the sync distributes every file there. Run from the writing-skills directory:
+ ```bash
+-node ./render-graphs.js ../some-skill           # Each diagram separately
+-node ./render-graphs.js ../some-skill --combine # All diagrams in one SVG
++mkdir -p /tmp/render/some-skill && cp ~/.pi/skills/some-skill/SKILL.md /tmp/render/some-skill/
++node ./render-graphs.js /tmp/render/some-skill           # Each diagram separately
++node ./render-graphs.js /tmp/render/some-skill --combine # All diagrams in one SVG
+ ```
+diff --git a/references/testing-skills-with-subagents.md b/references/testing-skills-with-subagents.md
+index e5bf682..e89f8bd 100644
+--- a/references/testing-skills-with-subagents.md
++++ b/references/testing-skills-with-subagents.md
+@@ -10,9 +10,7 @@ You run scenarios without the skill (RED - watch agent fail), write skill addres
+ 
+ **Core principle:** If you didn't watch an agent fail without the skill, you don't know if the skill prevents the right failures.
+ 
+-**REQUIRED BACKGROUND:** You MUST understand superpowers:test-driven-development before using this skill. That skill defines the fundamental RED-GREEN-REFACTOR cycle. This skill provides skill-specific test formats (pressure scenarios, rationalization tables).
+-
+-**Complete worked example:** See CLAUDE_MD_TESTING.md in this directory for a full test campaign testing CLAUDE.md documentation variants.
++The cycle is TDD's RED-GREEN-REFACTOR, summarized at the top of SKILL.md. This reference provides skill-specific test formats (pressure scenarios, rationalization tables).
+ 
+ ## When to Use
+ 
+diff --git a/render-graphs.js b/render-graphs.js
+index 59e74b5..fab7192 100755
+--- a/render-graphs.js
++++ b/render-graphs.js
+@@ -93,8 +93,8 @@ function main() {
+     console.error('  --combine    Combine all diagrams into one SVG');
+     console.error('');
+     console.error('Example:');
+-    console.error('  ./render-graphs.js ../subagent-driven-development');
+-    console.error('  ./render-graphs.js ../subagent-driven-development --combine');
++    console.error('  ./render-graphs.js /tmp/render/some-skill');
++    console.error('  ./render-graphs.js /tmp/render/some-skill --combine');
+     process.exit(1);
+   }
+ 
