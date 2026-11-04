@@ -10,3 +10,8 @@ My github username is @drew-council.
 
 Short sentences. RFC 2119 keywords for obligations. Commit = imperative subject. Commit body only for a fact the diff cannot show. Comments only where code needs clarification or concise doc comments, never narration.
 
+# Go
+
+- We are generally using modern Go 1.27.
+- Always use `map[T]struct{}` to represent a set. Never use `map[T]bool` unless pre-existing.
+
