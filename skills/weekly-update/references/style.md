@@ -17,10 +17,12 @@ An emoji sits at the start of the bullet, followed by a space. A group bullet th
 
 - Name the outcome, not the code change.
 - Keep it to one line, usually 3 to 12 words.
-- Use a noun phrase or past tense: "Bulk edit for report columns", "Fixed the date picker paste bug".
+- Use a noun phrase or past tense: "Bulk edit for report columns", "Retired the old report backend".
 - Write for a reader outside engineering. Readers include the whole company.
 - Leave out PR numbers, issue numbers, names, and implementation detail.
-- Fold a stack of related PRs into one bullet.
+- Report meaningful work. Leave out small one-off fixes, tooling, tests, and refactors with no visible outcome.
+- Fold the PRs for one feature into one bullet. A stack can hold several features, and each gets its own bullet.
+- Say what kind of change it is when the plain reading would mislead. "Faster report pages" reads as a product speedup. "Frontend rendering performance for report pages" says what it is.
 - Add a result when one exists: a before and after number, a rollout state, or a date.
 - Match the section's existing punctuation. Most sections omit the final period. Some use full sentences.
 - Do not inflate. "Worked on" and "Continued work on" are honest for unfinished work, under 🚧.
@@ -31,11 +33,12 @@ An emoji sits at the start of the bullet, followed by a space. A group bullet th
 | --- | --- |
 | Seven merged PRs: add the report tables, serve reports, add helpers, add the overview page, add detail pages | ✅ Weekly reports page in the admin console |
 | Merged PRs: add the audit table, write changes in changesets. Issue for the audit UI still In Progress | 🚧 Change history for reports |
-| Merged PR fixing a date bug on paste | ✅ Fix bug with copying and pasting dates |
+| Merged PR fixing a small one-off bug | Leave out |
 | Merged PR swapping a model, with eval numbers in its body | ✅ Switched to Model X (eval success 89% to 95%) |
 | Issue In Review with an open PR | 🚧 Support multiple sessions in the assistant |
+| One stack of open PRs: stop a running turn, then name sessions | Two bullets: 🚧 Stop the assistant mid-turn, and 🚧 Automatic names for assistant sessions |
 | Issue Ready, Timeframe Now, not started | 🔜 Sandbox environment rollout |
-| Dependency bumps, renames, test-only and lint-only PRs | Leave out, or fold into one bullet such as ✅ Removed unused code and dead tests |
+| Dependency bumps, renames, internal tooling, test-only and lint-only PRs | Leave out |
 
 ## Rollovers
 
@@ -106,15 +109,4 @@ Result and rollout notes go in parentheses or after a comma:
 ```text
   - ✅ New report groupings (rolled out to one clinic, full rollout pending)
   - ✅ Northside launched 10/5, after customer training
-```
-
-Volume varies by section. A section with many small fixes can run to 10 or 20 flat bullets, one per fix:
-
-```text
-Scans & Connections
-  - ✅ Fixed the terms and conditions banner.
-  - ✅ Fixed the trust device checkbox issue.
-  - ✅ Removed unused E2E tests and dead code.
-  - ✅ Improved connection metrics and visibility.
-  - 🚧 Restructuring of automated scans
 ```

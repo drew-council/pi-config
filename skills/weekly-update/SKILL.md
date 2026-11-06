@@ -87,7 +87,11 @@ Put each item of the user's work in the section it belongs to. Use the section's
 
 Then reconcile the user's own bullets. A Last Week 🚧 or 🔜 bullet is the user's only when it matches one of their issues or PRs. Give each of those a status from the evidence: finished or still open. Keep its wording. Skip every other bullet without mentioning it, because it belongs to a teammate.
 
-Skip what the doc already says. The user or a teammate may already have written it, so match on meaning, not exact words.
+Skip what the doc already says. The user or a teammate may already have written it, so match on meaning, not exact words. An existing bullet covers only what it names.
+
+Account for every open PR. A stack can hold several features, so read down each stack and treat each feature separately. Work stacked on top of an existing bullet's feature is not covered by that bullet.
+
+Report meaningful work only. Silently drop small one-off fixes, tooling, tests, and refactors with no visible outcome. Do not ask where they should go.
 
 ## 3. Draft
 
@@ -100,21 +104,23 @@ Weekly Recap <date>, activity since <window start>
 
 ## <Section>
 Add:
-- ✅ <bullet> (#123, #124)
-- 🚧 <bullet> (#125)
+- ✅ <bullet>
+- 🚧 <bullet>
 
 Change:
-- 🚧 <old bullet> → ✅ <new bullet> (#126)
+- 🚧 <old bullet> → ✅ <new bullet>
 
 ## Unplaced
-- <item>: <why it is unclear> (#127)
+- <item>: <why it is unclear>
 
-Left out: <the user's own work you skipped, and why>
+Left out: <sizable work of the user's that you skipped, and why>
 ```
 
 List only sections that gain or change one of the user's bullets. Do not mention other sections, or what teammates did or did not write.
 
-PR and issue numbers appear in the draft as evidence. They MUST NOT go in the doc. Say where a nested bullet goes. Note anything you inferred.
+The draft MUST NOT show PR or issue numbers, and neither MUST the doc. Give them only if the user asks where a bullet came from.
+
+Keep the draft short. Unplaced is for meaningful work only. Left out is one short line per item, and only for work the user might want back. Say where a nested bullet goes. Note anything you inferred that the user should check.
 
 Ask for approval or changes, then stop and wait. Do not write to the doc in the same turn as a draft. Redraft on feedback, and ask again.
 
@@ -123,20 +129,20 @@ Ask for approval or changes, then stop and wait. Do not write to the doc in the 
 Work only from the approved draft.
 
 1. Read the doc with `read_doc` again. People edit it all day. Keep this saved read as the "before" read.
-2. Write the approved changes to a JSON file outside the repository. The header of `{{skillDir}}/scripts/doc-edits.ts` documents the format. Leave out the evidence numbers.
+2. Write the approved changes to a JSON file outside the repository, in final bullet order. The header of `{{skillDir}}/scripts/doc-edits.ts` documents the format.
 3. Build the requests:
 
    ```sh
    bun {{skillDir}}/scripts/doc-edits.ts plan <before-read> <edits.json>
    ```
 
-4. Send its `requests` and `writeControl` in one `update_doc` call. Never remove `requiredRevisionId`.
+4. Send its `requests` and `writeControl` in one `update_doc` call, exactly as printed. Never remove `requiredRevisionId`. Do not edit the plan. If it looks wrong, stop and report it.
 
 If `plan` fails because a teammate changed a bullet, compare the draft with the new text. Apply what is still correct. If the approved text no longer fits, show the difference and ask.
 
 If `update_doc` rejects the revision, someone edited the doc. Read again, plan again, and resend.
 
-New bullets go after the last bullet of their section or parent. Adding a nested bullet where its parent has no children rebuilds that section's list, because Docs cannot set a level any other way. Bullet text and order do not change.
+New bullets go after the last bullet of their section or parent. Adding a bullet at a different level from the one before it rebuilds that section's list, because Docs cannot set a level any other way. Bullet text and order do not change.
 
 ## 5. Verify
 
@@ -146,7 +152,7 @@ Read the doc with `read_doc` again, then:
 bun {{skillDir}}/scripts/doc-edits.ts verify <before-read> <after-read> <edits.json>
 ```
 
-It checks that every edit landed at the right level, that no bullet was lost or changed level, and that the Last Week column did not change. A teammate's edit during the run can also show up here, so read each problem before acting on it.
+It checks that every edit landed at the right level and in listed order, that no bullet was lost or changed level, and that the Last Week column did not change. A teammate's edit during the run can also show up here, so read each problem before acting on it.
 
 Fix real problems with a new read, plan, and write. Report anything you cannot fix.
 
@@ -160,12 +166,14 @@ Use the T3 Code integrated browser, through its `preview_*` tools. This skill's 
 
 1. Read the doc with `read_file_content`. If the user's line already shows `[x]`, skip this step. A second click unticks the box.
 2. Open the doc with `preview_open`, passing `profileId: "Work"` and `reuseExistingTab: false`. The default profile holds a personal account that cannot open the doc. Never act on a tab the user opened.
-3. Take a `preview_snapshot` with `includeImage: true`. Check that the account button names the Sheer account. If the page says "You need access" or asks for a sign-in, stop and report it. You MUST NOT click "Request access", and you MUST NOT enter credentials.
-4. Find the box in the image, left of the user's name under "Did you complete your updates?". Docs draws its page on a canvas, so the accessibility tree does not list it.
-5. Convert the position. The image is scaled against click coordinates, so divide x and y by the image width over the width of the root `application` box. With a 1280 image and a 1241 box, image position (395, 719) is click position (383, 697).
-6. Click once with `preview_act`, using `x` and `y`.
-7. Read the doc with `read_file_content` again. The user's line MUST show `[x]`, and every other line MUST match step 1. If the click hit a neighbor's box, click that box again to restore it, then report what happened.
-8. Close your tab with `t3_preview_close`.
+3. Pin the page with `preview_resize`, using `mode: "freeform"`, `width: 1280`, and `height: 900`. In the default fill mode the page width changes between a snapshot and a click, and the doc re-centers, so the click misses.
+4. Take a `preview_snapshot` with `includeImage: true`. Check that the account button names the Sheer account. If the page says "You need access" or asks for a sign-in, stop and report it. You MUST NOT click "Request access", and you MUST NOT enter credentials.
+5. Find the box in the image, left of the user's name under "Did you complete your updates?". Docs draws its page on a canvas, so the accessibility tree does not list it.
+6. Convert the position. The image is smaller than the page, so multiply x and y by the width of the root `application` box over `screenshot.width`. Work this out on every run. A 1067 image of a 1280 page is a scale of 1.2.
+7. Click once with `preview_act`, using `x` and `y`.
+8. Read the doc with `read_file_content` again. The user's line MUST show `[x]`, and every other line MUST match step 1. If the click hit a neighbor's box, click that box again to restore it, then report what happened.
+9. If the line still shows `[ ]`, the click missed and may have opened a popup. Take a new snapshot, close any popup, and work out the position again. Never repeat the old position.
+10. Close your tab with `t3_preview_close`.
 
 If the Work profile is not signed in, or the `preview_*` tools are missing, report that the box is still unticked and why. Do not report it as done.
 

@@ -32,7 +32,7 @@ export type Paragraph = {
 export type Section = { name: string; thisWeek: Paragraph[]; lastWeek: Paragraph[] };
 export type Recap = { revisionId: string; tabId: string; sections: Section[] };
 export type Plan = { requests: object[]; writeControl: { requiredRevisionId: string } };
-type Insert = { anchor: Paragraph; level: number; items: string[] };
+type Insert = { anchor: Paragraph; lines: { text: string; level: number }[] };
 type Range = { startIndex: number; endIndex: number; tabId: string };
 
 const BULLET_PRESET = "BULLET_DISC_CIRCLE_SQUARE";
@@ -114,7 +114,8 @@ function locate(section: Section, edit: Edit): { anchor: Paragraph; level: numbe
   return { anchor, level: parent.level + 1 };
 }
 
-type Operation = { at: number; requests: object[]; growth: number; outdent?: { range: Range; level: number } };
+type Outdent = { range: Range; level: number };
+type Operation = { at: number; requests: object[]; growth: number; outdents?: Outdent[] };
 
 function replaceOperation(paragraph: Paragraph, text: string, tabId: string): Operation {
   if (paragraph.end - paragraph.start - 1 !== paragraph.text.length) {
@@ -140,28 +141,34 @@ function replaceOperation(paragraph: Paragraph, text: string, tabId: string): Op
 }
 
 function insertOperation(insert: Insert, rebuild: boolean, tabId: string): Operation {
-  const { anchor, level, items } = insert;
+  const { anchor, lines } = insert;
   const fill = anchor.listId !== undefined && anchor.text.trim() === "";
-  const tabs = rebuild ? "\t".repeat(Math.max(level - anchor.level, 0)) : "";
-  const lines = items.map((item) => tabs + item).join("\n");
-  const text = fill ? lines : `\n${lines}`;
   const at = fill ? anchor.start : anchor.end - 1;
-  const range = { startIndex: fill ? at : at + 1, endIndex: at + text.length, tabId };
-  const requests: object[] = [{ insertText: { location: { index: at, tabId }, text } }];
+  const outdents: Outdent[] = [];
 
+  let text = fill ? "" : "\n";
+  lines.forEach(({ text: line, level }, index) => {
+    if (index > 0) text += "\n";
+    const startIndex = at + text.length;
+    text += (rebuild ? "\t".repeat(Math.max(level - anchor.level, 0)) : "") + line;
+    if (rebuild && level < anchor.level)
+      outdents.push({ range: { startIndex, endIndex: at + text.length, tabId }, level });
+  });
+
+  const requests: object[] = [{ insertText: { location: { index: at, tabId }, text } }];
   if (anchor.listId === undefined) {
     // A section heading is bold, and new text inherits that.
+    const range = { startIndex: at + 1, endIndex: at + text.length, tabId };
     requests.push({ updateTextStyle: { range, textStyle: { bold: false }, fields: "bold" } });
     requests.push({ createParagraphBullets: { range, bulletPreset: BULLET_PRESET } });
   }
-  const outdent = rebuild && anchor.listId !== undefined && level < anchor.level ? { range, level } : undefined;
-  return { at, requests, growth: text.length, outdent };
+  return { at, requests, growth: text.length, outdents };
 }
 
 /** Sets a rebuilt paragraph's kept indent, which must happen after its old bullet is removed. */
-function outdentRequest(operation: Operation, operations: Operation[]): object {
-  const { range, level } = operation.outdent;
-  const shift = operations.filter((o) => o.at < operation.at).reduce((total, o) => total + o.growth, 0);
+function outdentRequest({ range, level }: Outdent, owner: Operation, operations: Operation[]): object {
+  const earlier = operations.filter((operation) => operation !== owner && operation.at <= owner.at);
+  const shift = earlier.reduce((total, operation) => total + operation.growth, 0);
   const paragraphStyle = {
     indentStart: { magnitude: INDENT_STEP * (level + 1), unit: "PT" },
     indentFirstLine: { magnitude: INDENT_STEP * level + INDENT_STEP / 2, unit: "PT" },
@@ -178,22 +185,22 @@ function outdentRequest(operation: Operation, operations: Operation[]): object {
 const highestFirst = (a: Operation, b: Operation) => b.at - a.at;
 
 function sectionOperations(section: Section, edits: Edit[], tabId: string): Operation[] {
-  const operations: Operation[] = [];
-  const inserts = new Map<string, Insert>();
+  const replacements: Operation[] = [];
+  // One insert per anchor: inserts at the same index would land in reverse order.
+  const inserts = new Map<number, Insert>();
 
   for (const edit of edits) {
     if (edit.replace) {
       const paragraph = findBullet(section, edit.replace);
       if (paragraph.suggested) throw new Error(`Bullet "${edit.replace}" has a pending suggestion.`);
-      operations.push(replaceOperation(paragraph, edit.text, tabId));
+      replacements.push(replaceOperation(paragraph, edit.text, tabId));
       continue;
     }
     const { anchor, level } = locate(section, edit);
     if (anchor.suggested) throw new Error(`Bullet "${anchor.text}" has a pending suggestion.`);
-    const key = `${anchor.start}:${level}`;
-    const insert = inserts.get(key) ?? { anchor, level, items: [] };
-    insert.items.push(edit.text);
-    inserts.set(key, insert);
+    const insert = inserts.get(anchor.start) ?? { anchor, lines: [] };
+    insert.lines.push({ text: edit.text, level });
+    inserts.set(anchor.start, insert);
   }
 
   // A new paragraph inherits its anchor's list, level, and indent, and Docs has no request that sets
@@ -201,8 +208,14 @@ function sectionOperations(section: Section, edits: Edit[], tabId: string): Oper
   // paragraph that joins a list its neighbor's level. So a level change rebuilds the section's list
   // from its first bullet, where the heading above stops that merge. The rebuilt level of each
   // paragraph is then its kept indent plus its leading tabs, so existing bullets need no change.
-  const rebuild = [...inserts.values()].some(({ anchor, level }) => anchor.listId && anchor.level !== level);
-  operations.push(...[...inserts.values()].map((insert) => insertOperation(insert, rebuild, tabId)));
+  const rebuild = [...inserts.values()].some(
+    ({ anchor, lines }) => anchor.listId && lines.some(({ level }) => level !== anchor.level),
+  );
+  // Inserts come first so that, at a shared index, a replacement's added text stays on its own line.
+  const operations = [
+    ...[...inserts.values()].map((insert) => insertOperation(insert, rebuild, tabId)),
+    ...replacements,
+  ];
   if (!rebuild) return operations;
 
   const body = section.thisWeek.slice(1);
@@ -218,7 +231,9 @@ function sectionOperations(section: Section, edits: Edit[], tabId: string): Oper
   const requests = [
     ...operations.sort(highestFirst).flatMap((operation) => operation.requests),
     { deleteParagraphBullets: { range } },
-    ...operations.filter((operation) => operation.outdent).map((operation) => outdentRequest(operation, operations)),
+    ...operations.flatMap((operation) =>
+      (operation.outdents ?? []).map((outdent) => outdentRequest(outdent, operation, operations)),
+    ),
     { createParagraphBullets: { range, bulletPreset: BULLET_PRESET } },
   ];
   return [{ at: first.start, requests, growth }];
@@ -266,20 +281,34 @@ export function verifyEdits(before: Recap, after: Recap, edits: Edit[]): string[
     }
   }
 
+  const lastAdded = new Map<Section, Paragraph>();
   for (const edit of edits) {
     const section = findSection(after, edit.section);
     const paragraph = section.thisWeek.slice(1).find((p) => p.text.trim() === edit.text.trim());
     if (!paragraph) {
       problems.push(`Missing "${edit.text}" in ${section.name}.`);
-    } else if (!paragraph.listId) {
+      continue;
+    }
+    if (!paragraph.listId) {
       problems.push(`"${edit.text}" is not a bullet.`);
     } else if (edit.parent) {
       const parent = section.thisWeek.find((p) => p.text.trim() === edit.parent.trim());
-      if (!parent || paragraph.start < parent.start || paragraph.level !== parent.level + 1) {
+      const between = section.thisWeek.filter((p) => p.listId && p.start > parent?.start && p.start < paragraph.start);
+      if (
+        !parent ||
+        paragraph.start < parent.start ||
+        paragraph.level !== parent.level + 1 ||
+        between.some((p) => p.level <= parent.level)
+      ) {
         problems.push(`"${edit.text}" is not nested under "${edit.parent}".`);
       }
     } else if (!edit.replace && paragraph.level !== 0) {
       problems.push(`"${edit.text}" is not a top-level bullet.`);
+    }
+    if (!edit.replace) {
+      const previous = lastAdded.get(section);
+      if (previous && paragraph.start < previous.start) problems.push(`"${edit.text}" is out of order.`);
+      lastAdded.set(section, paragraph);
     }
   }
   return problems;
