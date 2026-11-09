@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "1.4.0",
+  "lastChangelogVersion": "1.5.0",
   "extensions": [],
   "defaultTools": [
     "+codemode",
@@ -20,5 +20,8 @@
   "theme": "catppuccin-mocha",
   "hideThinkingBlock": true,
   "tuiMode": "fullscreen",
-  "deviceId": "4a934e53-e1a2-4648-9489-8f4b593e9cba"
+  "deviceId": "4a934e53-e1a2-4648-9489-8f4b593e9cba",
+  "extensionChangelogVersions": {
+    "{\"source\":\"git:github.com/elidickinson/pi-claude-bridge\",\"scope\":\"user\"}": "0.11.0"
+  }
 }
