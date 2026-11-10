@@ -1,0 +1,29 @@
+{
+  "$schema": "https://pi.dev/schemas/models.schema.json",
+  "providers": {
+    "google-vertex": {
+      "models": [
+        {
+          "id": "gemini-4-carbon",
+          "name": "Gemini 4 Carbon",
+          "api": "google-vertex",
+          "baseUrl": "https://{location}-aiplatform.googleapis.com",
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null,
+            "max": null
+          },
+          "input": ["text", "image"],
+          "cost": { "input": 4, "output": 20, "cacheRead": 0.2, "cacheWrite": 0 },
+          "contextWindow": 1048576,
+          "maxTokens": 65536
+        }
+      ]
+    }
+  }
+}

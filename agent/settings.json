@@ -22,6 +22,6 @@
   "tuiMode": "fullscreen",
   "deviceId": "4a934e53-e1a2-4648-9489-8f4b593e9cba",
   "extensionChangelogVersions": {
-    "{\"source\":\"git:github.com/elidickinson/pi-claude-bridge\",\"scope\":\"user\"}": "0.11.0"
+    "{\"source\":\"git:github.com/elidickinson/pi-claude-bridge\",\"scope\":\"user\"}": "0.12.0"
   }
 }
