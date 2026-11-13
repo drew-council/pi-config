@@ -13,5 +13,5 @@ Short sentences. RFC 2119 keywords for obligations. Commit = imperative subject.
 # Go
 
 - We are generally using modern Go 1.27.
-- Always use `map[T]struct{}` to represent a set. Never use `map[T]bool` unless pre-existing.
+- Use `x/exp/collection/set` for set operations. Never use `map[T]struct{}` or `map[T]bool` as a set unless pre-existing.
 
