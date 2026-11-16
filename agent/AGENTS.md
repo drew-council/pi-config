@@ -8,7 +8,10 @@ My github username is @drew-council.
 
 # Writing and Comment Style
 
-Short sentences. RFC 2119 keywords for obligations. Commit = imperative subject. Commit body only for a fact the diff cannot show. Comments only where code needs clarification or concise doc comments, never narration.
+Short sentences. RFC 2119 keywords for obligations. Commit = imperative subject. Commit body only for a fact the diff cannot show.
+
+Code comments only where code needs clarification or concise doc comments, never narration. Use semantic line feeds, especially in code comments.
+
 
 # Go
 
