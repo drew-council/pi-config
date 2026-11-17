@@ -3,6 +3,9 @@ name: copilot-review
 description: Address GitHub Copilot review comments. Use only when you actually see "GitHub Copilot" come up.
 ---
 
+This skill is invoked on one or more "targets". If not stated by the user, by default, target the active PR.
+You are tasked with handling the PR comment issues called out by the GitHub Copilot review bot. This means fixing them **when relevant**, replying to them, and resolving them.
+
 # Review Behavior
 
 GitHub Copilot, in the `sheer` repository, automatically is requested for review when a PR is marked "Ready for review".
