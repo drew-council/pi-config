@@ -78,7 +78,7 @@ test("model blacklist exposes only approved OpenRouter models", () => {
   );
 });
 
-test("model blacklist exposes only the pinned Fireworks equivalents of approved OpenRouter models", () => {
+test("model blacklist exposes only pinned Fireworks models and the DeepSeek 1017 ultra-fast router", () => {
   const models = [
     { provider: "fireworks", id: "accounts/fireworks/models/glm-5p3", name: "GLM 5.3" },
     { provider: "fireworks", id: "accounts/fireworks/models/glm-5p3-flash", name: "GLM 5.3 Flash" },
@@ -93,6 +93,13 @@ test("model blacklist exposes only the pinned Fireworks equivalents of approved 
     { provider: "fireworks", id: "accounts/fireworks/routers/glm-flash-latest", name: "GLM Flash Latest" },
     { provider: "fireworks", id: "accounts/fireworks/routers/glm-5p3-fast", name: "GLM 5.3 Fast" },
     { provider: "fireworks", id: "accounts/fireworks/routers/deepseek-flash-latest", name: "DeepSeek Flash Latest" },
+    {
+      provider: "fireworks",
+      id: "accounts/fireworks/routers/deepseek-v4p1-flash-1017-ultrafast",
+      name: "DeepSeek V4.1 Flash 1017 Ultra-fast",
+    },
+    { provider: "fireworks", id: "accounts/fireworks/models/deepseek-v4p1-flash-1017-ultrafast" },
+    { provider: "fireworks", id: "accounts/fireworks/routers/deepseek-v4p1-flash-1017" },
   ];
 
   assert.deepEqual(
@@ -101,6 +108,7 @@ test("model blacklist exposes only the pinned Fireworks equivalents of approved 
       "accounts/fireworks/models/glm-5p3",
       "accounts/fireworks/models/glm-5p3-flash",
       "accounts/fireworks/models/deepseek-v4p1-flash-1017",
+      "accounts/fireworks/routers/deepseek-v4p1-flash-1017-ultrafast",
     ],
   );
 });
