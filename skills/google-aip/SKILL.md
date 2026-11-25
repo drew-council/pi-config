@@ -79,90 +79,90 @@ When reviewing an API definition, PR, schema, or implementation:
 ## General AIP Reference Catalog (`{{skillDir}}/references/`)
 
 ### Meta & Process
-- `{{skillDir}}/references/0001.md` — **AIP-1: AIP Purpose and Guidelines**: Why AIPs exist, states (`draft`, `reviewing`, `approved`), and governance.
-- `{{skillDir}}/references/0002.md` — **AIP-2: AIP Numbering**: General block (`1–999`) vs. product-area blocks (`2500+`) and internal `9000+` block.
-- `{{skillDir}}/references/0003.md` — **AIP-3: AIP Versioning**: Date-based evolution of AIP guidance.
-- `{{skillDir}}/references/0008.md` — **AIP-8: AIP Style and Guidance**: RFC 2119 requirement keywords (`MUST`, `SHOULD`, `MAY`) and designing for broad client ecosystems.
-- `{{skillDir}}/references/0009.md` — **AIP-9: Glossary**: Definitions of service, interface, method, resource, consumer, producer, and declarative client.
-- `{{skillDir}}/references/0100.md` — **AIP-100: API Design Review FAQ**: How API design reviews work, handling precedent, and resolving design trade-offs.
-- `{{skillDir}}/references/0200.md` — **AIP-200: Precedent**: When local/existing API consistency justifies deviating from an AIP, and when it does not.
-- `{{skillDir}}/references/0205.md` — **AIP-205: Beta-blocking changes**: Usability and standard violations that must be fixed before promoting an Alpha API to Beta/GA.
+- `0001.md` — **AIP-1: AIP Purpose and Guidelines**: Why AIPs exist, states (`draft`, `reviewing`, `approved`), and governance.
+- `0002.md` — **AIP-2: AIP Numbering**: General block (`1–999`) vs. product-area blocks (`2500+`) and internal `9000+` block.
+- `0003.md` — **AIP-3: AIP Versioning**: Date-based evolution of AIP guidance.
+- `0008.md` — **AIP-8: AIP Style and Guidance**: RFC 2119 requirement keywords (`MUST`, `SHOULD`, `MAY`) and designing for broad client ecosystems.
+- `0009.md` — **AIP-9: Glossary**: Definitions of service, interface, method, resource, consumer, producer, and declarative client.
+- `0100.md` — **AIP-100: API Design Review FAQ**: How API design reviews work, handling precedent, and resolving design trade-offs.
+- `0200.md` — **AIP-200: Precedent**: When local/existing API consistency justifies deviating from an AIP, and when it does not.
+- `0205.md` — **AIP-205: Beta-blocking changes**: Usability and standard violations that must be fixed before promoting an Alpha API to Beta/GA.
 
 ### API Concepts & Resource Design
-- `{{skillDir}}/references/0111.md` — **AIP-111: Planes**: Management plane vs. data plane distinctions (scale, latency, consistency, declarative friendliness).
-- `{{skillDir}}/references/0121.md` — **AIP-121: Resource-oriented design**: Core model: resources (nouns), acyclic hierarchies, standard methods, matching resource schemas across methods, strong consistency on management plane, stateless requests.
-- `{{skillDir}}/references/0122.md` — **AIP-122: Resource names**: Collection identifiers (plural `camelCase`), resource ID segments, full resource names, `name` vs. `parent` vs. `*_id`, referring to other resources by name instead of embedding them.
-- `{{skillDir}}/references/0123.md` — **AIP-123: Resource types**: Canonical `{Service}/{Type}` resource type names, singular/plural definitions, message alignment.
-- `{{skillDir}}/references/0124.md` — **AIP-124: Resource association**: Single canonical parent rule, multiple many-to-one references, and sub-resources/association resources for many-to-many relationships.
-- `{{skillDir}}/references/0126.md` — **AIP-126: Enumerations**: `UPPER_SNAKE_CASE`, mandatory `*_UNSPECIFIED = 0` zero value, when to use enums vs. strings (`AIP-143`) or booleans.
-- `{{skillDir}}/references/0128.md` — **AIP-128: Declarative-friendly interfaces**: Requirements for IaC/declarative tools (user-settable IDs, `etag`, `allow_missing`, LROs, no custom methods).
-- `{{skillDir}}/references/0129.md` — **AIP-129: Server-Modified Values and Defaults**: Handling server defaults, dynamic defaults (separate `effective_*` output-only fields), and input normalization.
-- `{{skillDir}}/references/0156.md` — **AIP-156: Singleton resources**: Resources with exactly one instance per parent (e.g., `Settings`, `Config`); supports `Get` and `Update`, omits `Create`/`Delete`/`List`.
-- `{{skillDir}}/references/0236.md` — **AIP-236: Policy preview**: Previewing/simulating policy changes (`live` vs. `preview` policy fields, dry-run evaluation).
+- `0111.md` — **AIP-111: Planes**: Management plane vs. data plane distinctions (scale, latency, consistency, declarative friendliness).
+- `0121.md` — **AIP-121: Resource-oriented design**: Core model: resources (nouns), acyclic hierarchies, standard methods, matching resource schemas across methods, strong consistency on management plane, stateless requests.
+- `0122.md` — **AIP-122: Resource names**: Collection identifiers (plural `camelCase`), resource ID segments, full resource names, `name` vs. `parent` vs. `*_id`, referring to other resources by name instead of embedding them.
+- `0123.md` — **AIP-123: Resource types**: Canonical `{Service}/{Type}` resource type names, singular/plural definitions, message alignment.
+- `0124.md` — **AIP-124: Resource association**: Single canonical parent rule, multiple many-to-one references, and sub-resources/association resources for many-to-many relationships.
+- `0126.md` — **AIP-126: Enumerations**: `UPPER_SNAKE_CASE`, mandatory `*_UNSPECIFIED = 0` zero value, when to use enums vs. strings (`AIP-143`) or booleans.
+- `0128.md` — **AIP-128: Declarative-friendly interfaces**: Requirements for IaC/declarative tools (user-settable IDs, `etag`, `allow_missing`, LROs, no custom methods).
+- `0129.md` — **AIP-129: Server-Modified Values and Defaults**: Handling server defaults, dynamic defaults (separate `effective_*` output-only fields), and input normalization.
+- `0156.md` — **AIP-156: Singleton resources**: Resources with exactly one instance per parent (e.g., `Settings`, `Config`); supports `Get` and `Update`, omits `Create`/`Delete`/`List`.
+- `0236.md` — **AIP-236: Policy preview**: Previewing/simulating policy changes (`live` vs. `preview` policy fields, dry-run evaluation).
 
 ### Operations: Standard, Custom & Batch Methods
-- `{{skillDir}}/references/0130.md` — **AIP-130: Methods**: Choosing between standard methods, custom methods, and batch methods.
-- `{{skillDir}}/references/0131.md` — **AIP-131: Standard methods: Get**: Retrieving a single resource by `name`; `GET`, no side effects, returns the resource itself.
-- `{{skillDir}}/references/0132.md` — **AIP-132: Standard methods: List**: Listing a collection (`parent`, `page_size`, `page_token`, optional `filter` and `order_by`); response has plural resource field + `next_page_token`.
-- `{{skillDir}}/references/0133.md` — **AIP-133: Standard methods: Create**: Creating a resource (`parent`, `book`, optional `book_id`); `POST`, returns the created resource (or LRO).
-- `{{skillDir}}/references/0134.md` — **AIP-134: Standard methods: Update**: Partial updates via `PATCH` + `update_mask` (field mask); `allow_missing` for upsert; returns updated resource (or LRO).
-- `{{skillDir}}/references/0135.md` — **AIP-135: Standard methods: Delete**: Deleting a resource by `name`; `DELETE`, returns `Empty` (or resource for soft-delete, or LRO); `allow_missing`, `etag`, `force` for cascading delete.
-- `{{skillDir}}/references/0136.md` — **AIP-136: Custom methods**: `POST /v1/{name=...}:<verb>` for actions that cannot map to standard CRUD; verb naming (`ArchiveBook`, no prepositions), resource vs. collection vs. stateless custom methods.
-- `{{skillDir}}/references/0151.md` — **AIP-151: Long-running operations**: Async operations returning an `Operation` with `response` and `metadata` types, polling, cancellation, expiration, and errors.
-- `{{skillDir}}/references/0231.md` — **AIP-231: Batch methods: Get**: `BatchGet<Plural>` (`GET /v1/{parent=...}/books:batchGet`), atomic retrieval of up to a fixed number of resources.
-- `{{skillDir}}/references/0233.md` — **AIP-233: Batch methods: Create**: `BatchCreate<Plural>` (`POST .../books:batchCreate`), atomic vs. partial success patterns.
-- `{{skillDir}}/references/0234.md` — **AIP-234: Batch methods: Update**: `BatchUpdate<Plural>` (`POST .../books:batchUpdate`), nested `UpdateBookRequest` items, atomic vs. partial success.
-- `{{skillDir}}/references/0235.md` — **AIP-235: Batch methods: Delete**: `BatchDelete<Plural>` (`POST .../books:batchDelete`), atomic vs. partial success, soft-delete responses.
+- `0130.md` — **AIP-130: Methods**: Choosing between standard methods, custom methods, and batch methods.
+- `0131.md` — **AIP-131: Standard methods: Get**: Retrieving a single resource by `name`; `GET`, no side effects, returns the resource itself.
+- `0132.md` — **AIP-132: Standard methods: List**: Listing a collection (`parent`, `page_size`, `page_token`, optional `filter` and `order_by`); response has plural resource field + `next_page_token`.
+- `0133.md` — **AIP-133: Standard methods: Create**: Creating a resource (`parent`, `book`, optional `book_id`); `POST`, returns the created resource (or LRO).
+- `0134.md` — **AIP-134: Standard methods: Update**: Partial updates via `PATCH` + `update_mask` (field mask); `allow_missing` for upsert; returns updated resource (or LRO).
+- `0135.md` — **AIP-135: Standard methods: Delete**: Deleting a resource by `name`; `DELETE`, returns `Empty` (or resource for soft-delete, or LRO); `allow_missing`, `etag`, `force` for cascading delete.
+- `0136.md` — **AIP-136: Custom methods**: `POST /v1/{name=...}:<verb>` for actions that cannot map to standard CRUD; verb naming (`ArchiveBook`, no prepositions), resource vs. collection vs. stateless custom methods.
+- `0151.md` — **AIP-151: Long-running operations**: Async operations returning an `Operation` with `response` and `metadata` types, polling, cancellation, expiration, and errors.
+- `0231.md` — **AIP-231: Batch methods: Get**: `BatchGet<Plural>` (`GET /v1/{parent=...}/books:batchGet`), atomic retrieval of up to a fixed number of resources.
+- `0233.md` — **AIP-233: Batch methods: Create**: `BatchCreate<Plural>` (`POST .../books:batchCreate`), atomic vs. partial success patterns.
+- `0234.md` — **AIP-234: Batch methods: Update**: `BatchUpdate<Plural>` (`POST .../books:batchUpdate`), nested `UpdateBookRequest` items, atomic vs. partial success.
+- `0235.md` — **AIP-235: Batch methods: Delete**: `BatchDelete<Plural>` (`POST .../books:batchDelete`), atomic vs. partial success, soft-delete responses.
 
 ### Fields
-- `{{skillDir}}/references/0140.md` — **AIP-140: Field names**: ` lower_snake_case`, American English, no prepositions (`for`, `during`, `at`, `with`), avoid abbreviations (`config`, `id`, `spec`, `stats` allowed), boolean `has_`/`is_` rules, `uri` over `url`.
-- `{{skillDir}}/references/0141.md` — **AIP-141: Quantities**: Always suffix numeric quantities with the plural unit (`size_bytes`, `distance_miles`, ` node_count`); prefer `int64` over `uint64` and `double` over `float`.
-- `{{skillDir}}/references/0142.md` — **AIP-142: Time and duration**: `Timestamp` with `*_time` suffix (never `*_date` or `*_at`), `Duration` or unit-suffixed integers, civil `Date`/`TimeOfDay`/`DateTime` + IANA time zone.
-- `{{skillDir}}/references/0143.md` — **AIP-143: Standardized codes**: Use string fields for MIME `content_type` / `mime_type`, Unicode CLDR `region_code` (not `country`), ISO-4217 `currency_code`, BCP-47 `language_code`, IANA `time_zone`.
-- `{{skillDir}}/references/0144.md` — **AIP-144: Repeated fields**: Prefer repeated messages over parallel arrays or scalar lists when elements may grow attributes; helper strategies for updating repeated fields.
-- `{{skillDir}}/references/0145.md` — **AIP-145: Ranges**: Half-open `[start_*, end_*)` intervals (`start_time`/`end_time`, `start_offset`/`end_offset`); inclusive only for dates.
-- `{{skillDir}}/references/0146.md` — **AIP-146: Generic fields**: Trade-offs between `oneof`, `map<string, string>`, `Struct`, and `Any`; avoid untyped blobs when schemas are known.
-- `{{skillDir}}/references/0147.md` — **AIP-147: Sensitive fields**: Handling secrets/keys via `INPUT_ONLY` fields, dedicated custom methods, or separate secret resources.
-- `{{skillDir}}/references/0148.md` — **AIP-148: Standard fields**: Standard names and semantics for `name`, `uid`, `display_name`, `title`, `description`, `create_time`, `update_time`, `delete_time`, `expire_time`, `etag`, `labels`, `annotations`.
-- `{{skillDir}}/references/0149.md` — **AIP-149: Unset field values**: Distinguishing unset/null from zero-value defaults (`optional` presence tracking) and avoiding nullable wrapper types.
-- `{{skillDir}}/references/0202.md` — **AIP-202: Fields**: Enriching string/bytes fields with semantic format metadata (`UUID4`, `IPV4`, `IPV6`, `IPV4_OR_IPV6`).
-- `{{skillDir}}/references/0203.md` — **AIP-203: Field behavior documentation**: Semantics of `REQUIRED`, `OPTIONAL`, `OUTPUT_ONLY`, `INPUT_ONLY`, `IMMUTABLE`, `IDENTIFIER`, and `UNORDERED_LIST` (including ignoring `OUTPUT_ONLY` fields in requests rather than erroring).
-- `{{skillDir}}/references/0216.md` — **AIP-216: States**: Lifecycle `State` enum (`CREATING`, `ACTIVE`, `UPDATING`, `DELETING`, `DELETED`, `FAILED`, `SUSPENDED`), output-only `state` field, state transition methods.
+- `0140.md` — **AIP-140: Field names**: ` lower_snake_case`, American English, no prepositions (`for`, `during`, `at`, `with`), avoid abbreviations (`config`, `id`, `spec`, `stats` allowed), boolean `has_`/`is_` rules, `uri` over `url`.
+- `0141.md` — **AIP-141: Quantities**: Always suffix numeric quantities with the plural unit (`size_bytes`, `distance_miles`, ` node_count`); prefer `int64` over `uint64` and `double` over `float`.
+- `0142.md` — **AIP-142: Time and duration**: `Timestamp` with `*_time` suffix (never `*_date` or `*_at`), `Duration` or unit-suffixed integers, civil `Date`/`TimeOfDay`/`DateTime` + IANA time zone.
+- `0143.md` — **AIP-143: Standardized codes**: Use string fields for MIME `content_type` / `mime_type`, Unicode CLDR `region_code` (not `country`), ISO-4217 `currency_code`, BCP-47 `language_code`, IANA `time_zone`.
+- `0144.md` — **AIP-144: Repeated fields**: Prefer repeated messages over parallel arrays or scalar lists when elements may grow attributes; helper strategies for updating repeated fields.
+- `0145.md` — **AIP-145: Ranges**: Half-open `[start_*, end_*)` intervals (`start_time`/`end_time`, `start_offset`/`end_offset`); inclusive only for dates.
+- `0146.md` — **AIP-146: Generic fields**: Trade-offs between `oneof`, `map<string, string>`, `Struct`, and `Any`; avoid untyped blobs when schemas are known.
+- `0147.md` — **AIP-147: Sensitive fields**: Handling secrets/keys via `INPUT_ONLY` fields, dedicated custom methods, or separate secret resources.
+- `0148.md` — **AIP-148: Standard fields**: Standard names and semantics for `name`, `uid`, `display_name`, `title`, `description`, `create_time`, `update_time`, `delete_time`, `expire_time`, `etag`, `labels`, `annotations`.
+- `0149.md` — **AIP-149: Unset field values**: Distinguishing unset/null from zero-value defaults (`optional` presence tracking) and avoiding nullable wrapper types.
+- `0202.md` — **AIP-202: Fields**: Enriching string/bytes fields with semantic format metadata (`UUID4`, `IPV4`, `IPV6`, `IPV4_OR_IPV6`).
+- `0203.md` — **AIP-203: Field behavior documentation**: Semantics of `REQUIRED`, `OPTIONAL`, `OUTPUT_ONLY`, `INPUT_ONLY`, `IMMUTABLE`, `IDENTIFIER`, and `UNORDERED_LIST` (including ignoring `OUTPUT_ONLY` fields in requests rather than erroring).
+- `0216.md` — **AIP-216: States**: Lifecycle `State` enum (`CREATING`, `ACTIVE`, `UPDATING`, `DELETING`, `DELETED`, `FAILED`, `SUSPENDED`), output-only `state` field, state transition methods.
 
 ### Design Patterns
-- `{{skillDir}}/references/0152.md` — **AIP-152: Jobs**: Modeling recurring or re-runnable long-running tasks as a `Job` resource with a `:run` custom method returning an LRO.
-- `{{skillDir}}/references/0153.md` — **AIP-153: Import and export**: `:import` and `:export` custom methods, source/destination config `oneof`, inline vs. external storage, LRO handling.
-- `{{skillDir}}/references/0154.md` — **AIP-154: Resource freshness validation**: Optimistic concurrency via `etag` (strong vs. weak), `ABORTED` (`409`) on mismatch.
-- `{{skillDir}}/references/0155.md` — **AIP-155: Request identification**: Idempotency via `request_id` (UUID4); deduplicating retries and returning cached response on duplicate request IDs.
-- `{{skillDir}}/references/0157.md` — **AIP-157: Partial responses**: Resource `View` enums (`BASIC`, `FULL`) vs. read field masks for large or expensive fields.
-- `{{skillDir}}/references/0158.md` — **AIP-158: Pagination**: `page_size` and opaque `page_token` on requests, `next_page_token` and optional `total_size` on responses, optional `skip`.
-- `{{skillDir}}/references/0159.md` — **AIP-159: Reading across collections**: Supporting `-` wildcard in parent segments (`publishers/-/books`) for cross-parent `List` and `Get`.
-- `{{skillDir}}/references/0160.md` — **AIP-160: Filtering**: Structured `string filter` expressions (`AND`, `OR`, `NOT`, comparisons, `:` has operator, field traversal).
-- `{{skillDir}}/references/0161.md` — **AIP-161: Field masks**: Wildcards, nested field paths, map key masks, and invalid mask handling.
-- `{{skillDir}}/references/0162.md` — **AIP-162: Resource Revisions**: Revision history via `@<revision_id>` syntax or nested `revisions` subcollections, tagging, rollback, and deleting revisions.
-- `{{skillDir}}/references/0163.md` — **AIP-163: Change validation**: `bool validate_only` on mutating requests for dry-run validation without side effects.
-- `{{skillDir}}/references/0164.md` — **AIP-164: Soft delete**: Retaining deleted resources with `DELETED` state and `expire_time`, `show_deleted` on `List`, `:undelete` and `:expunge` methods.
-- `{{skillDir}}/references/0165.md` — **AIP-165: Criteria-based delete**: `: purge` custom method (`filter` + `force` dry-run safety flag) when deleting resources by filter criteria.
-- `{{skillDir}}/references/0210.md` — **AIP-210: Unicode**: UTF-8 encoding, NFC normalization, measuring lengths in Unicode code points or UTF-8 bytes, identifier character restrictions.
-- `{{skillDir}}/references/0211.md` — **AIP-211: Authorization checks**: Check permissions before input validation to prevent resource-existence timing/error leaks; `PERMISSION_DENIED` vs. `NOT_FOUND`.
-- `{{skillDir}}/references/0214.md` — **AIP-214: Resource expiration**: `expire_time` (`Timestamp`) + input-only `ttl` (`Duration`) `oneof` for automatic resource expiration.
-- `{{skillDir}}/references/0217.md` — **AIP-217: Unreachable resources**: `repeated string unreachable` and `return_partial_success` when listing across regions/shards with partial outages.
+- `0152.md` — **AIP-152: Jobs**: Modeling recurring or re-runnable long-running tasks as a `Job` resource with a `:run` custom method returning an LRO.
+- `0153.md` — **AIP-153: Import and export**: `:import` and `:export` custom methods, source/destination config `oneof`, inline vs. external storage, LRO handling.
+- `0154.md` — **AIP-154: Resource freshness validation**: Optimistic concurrency via `etag` (strong vs. weak), `ABORTED` (`409`) on mismatch.
+- `0155.md` — **AIP-155: Request identification**: Idempotency via `request_id` (UUID4); deduplicating retries and returning cached response on duplicate request IDs.
+- `0157.md` — **AIP-157: Partial responses**: Resource `View` enums (`BASIC`, `FULL`) vs. read field masks for large or expensive fields.
+- `0158.md` — **AIP-158: Pagination**: `page_size` and opaque `page_token` on requests, `next_page_token` and optional `total_size` on responses, optional `skip`.
+- `0159.md` — **AIP-159: Reading across collections**: Supporting `-` wildcard in parent segments (`publishers/-/books`) for cross-parent `List` and `Get`.
+- `0160.md` — **AIP-160: Filtering**: Structured `string filter` expressions (`AND`, `OR`, `NOT`, comparisons, `:` has operator, field traversal).
+- `0161.md` — **AIP-161: Field masks**: Wildcards, nested field paths, map key masks, and invalid mask handling.
+- `0162.md` — **AIP-162: Resource Revisions**: Revision history via `@<revision_id>` syntax or nested `revisions` subcollections, tagging, rollback, and deleting revisions.
+- `0163.md` — **AIP-163: Change validation**: `bool validate_only` on mutating requests for dry-run validation without side effects.
+- `0164.md` — **AIP-164: Soft delete**: Retaining deleted resources with `DELETED` state and `expire_time`, `show_deleted` on `List`, `:undelete` and `:expunge` methods.
+- `0165.md` — **AIP-165: Criteria-based delete**: `: purge` custom method (`filter` + `force` dry-run safety flag) when deleting resources by filter criteria.
+- `0210.md` — **AIP-210: Unicode**: UTF-8 encoding, NFC normalization, measuring lengths in Unicode code points or UTF-8 bytes, identifier character restrictions.
+- `0211.md` — **AIP-211: Authorization checks**: Check permissions before input validation to prevent resource-existence timing/error leaks; `PERMISSION_DENIED` vs. `NOT_FOUND`.
+- `0214.md` — **AIP-214: Resource expiration**: `expire_time` (`Timestamp`) + input-only `ttl` (`Duration`) `oneof` for automatic resource expiration.
+- `0217.md` — **AIP-217: Unreachable resources**: `repeated string unreachable` and `return_partial_success` when listing across regions/shards with partial outages.
 
 ### Compatibility & Versioning
-- `{{skillDir}}/references/0180.md` — **AIP-180: Backwards compatibility**: Source, wire, and semantic compatibility rules: what changes are safe vs. breaking across API evolutions.
-- `{{skillDir}}/references/0181.md` — **AIP-181: Stability levels**: Alpha / Experimental, Beta / Preview, and GA expectations for stability, support, and deprecation windows.
-- `{{skillDir}}/references/0182.md` — **AIP-182: External software dependencies**: Versioning and lifecycle rules when a resource exposes third-party software versions.
-- `{{skillDir}}/references/0184.md` — **AIP-184: API version identifiers**: Major (`v1`), beta (`v1beta1`), and alpha (`v1alpha`) version identifier formats and ordering.
-- `{{skillDir}}/references/0185.md` — **AIP-185: API Versioning**: Channel-based, interface-based, release-based, and visibility-based versioning strategies.
+- `0180.md` — **AIP-180: Backwards compatibility**: Source, wire, and semantic compatibility rules: what changes are safe vs. breaking across API evolutions.
+- `0181.md` — **AIP-181: Stability levels**: Alpha / Experimental, Beta / Preview, and GA expectations for stability, support, and deprecation windows.
+- `0182.md` — **AIP-182: External software dependencies**: Versioning and lifecycle rules when a resource exposes third-party software versions.
+- `0184.md` — **AIP-184: API version identifiers**: Major (`v1`), beta (`v1beta1`), and alpha (`v1alpha`) version identifier formats and ordering.
+- `0185.md` — **AIP-185: API Versioning**: Channel-based, interface-based, release-based, and visibility-based versioning strategies.
 
 ### Polish & Error Handling
-- `{{skillDir}}/references/0190.md` — **AIP-190: Naming conventions**: Service, interface, method (`UpperCamelCase` verb+noun), message, and enum naming conventions.
-- `{{skillDir}}/references/0191.md` — **AIP-191: File and directory structure**: Package naming, directory layout, and language-specific packaging options (Protobuf).
-- `{{skillDir}}/references/0192.md` — **AIP-192: Documentation**: Writing clear API comments: third-person declarative style, constraints, units, cross-references, and deprecation notices.
-- `{{skillDir}}/references/0193.md` — **AIP-193: Errors**: Canonical error codes, actionable developer `message`, structured `ErrorInfo` (`reason`, `domain`, `metadata`), `LocalizedMessage`, and partial errors.
-- `{{skillDir}}/references/0194.md` — **AIP-194: Automatic retry configuration**: Which methods and status codes (`UNAVAILABLE`, `DEADLINE_EXCEEDED`) are safe for automatic client retry vs. non-retryable.
+- `0190.md` — **AIP-190: Naming conventions**: Service, interface, method (`UpperCamelCase` verb+noun), message, and enum naming conventions.
+- `0191.md` — **AIP-191: File and directory structure**: Package naming, directory layout, and language-specific packaging options (Protobuf).
+- `0192.md` — **AIP-192: Documentation**: Writing clear API comments: third-person declarative style, constraints, units, cross-references, and deprecation notices.
+- `0193.md` — **AIP-193: Errors**: Canonical error codes, actionable developer `message`, structured `ErrorInfo` (`reason`, `domain`, `metadata`), `LocalizedMessage`, and partial errors.
+- `0194.md` — **AIP-194: Automatic retry configuration**: Which methods and status codes (`UNAVAILABLE`, `DEADLINE_EXCEEDED`) are safe for automatic client retry vs. non-retryable.
 
 ### Protocol Buffers (When Working with `.proto` / gRPC)
-- `{{skillDir}}/references/0127.md` — **AIP-127: HTTP and gRPC Transcoding**: `google.api.http` path bindings, query parameters, `body` mappings, and `additional_bindings`.
-- `{{skillDir}}/references/0213.md` — **AIP-213: Common components**: Using well-known `google.protobuf.*` and `google.type.*` messages (`Date`, `Money`, `LatLng`, `Interval`, `PostalAddress`).
-- `{{skillDir}}/references/0215.md` — **AIP-215: API-specific protos**: Keeping API proto packages self-contained within a versioned package namespace.
+- `0127.md` — **AIP-127: HTTP and gRPC Transcoding**: `google.api.http` path bindings, query parameters, `body` mappings, and `additional_bindings`.
+- `0213.md` — **AIP-213: Common components**: Using well-known `google.protobuf.*` and `google.type.*` messages (`Date`, `Money`, `LatLng`, `Interval`, `PostalAddress`).
+- `0215.md` — **AIP-215: API-specific protos**: Keeping API proto packages self-contained within a versioned package namespace.
