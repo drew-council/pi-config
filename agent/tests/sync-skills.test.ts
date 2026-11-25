@@ -54,6 +54,7 @@ test("each consumer receives only the frontmatter it understands", () => {
   ]);
   assert.deepEqual(Object.keys(targetFrontmatter(frontmatter, "codex")), ["name", "description"]);
   assert.deepEqual(Object.keys(targetFrontmatter(frontmatter, "claude")), Object.keys(frontmatter));
+  assert.deepEqual(targetFrontmatter(frontmatter, "antigravity"), targetFrontmatter(frontmatter, "pi"));
 });
 
 test("rendered skill files parse back to the same frontmatter and body", () => {
@@ -70,6 +71,7 @@ test("sync generates per-consumer skills from local, command, and git sources", 
     const sourceDir = join(root, "skills");
     await mkdir(join(home, ".pi", "agent"), { recursive: true });
     await mkdir(join(home, ".codex"), { recursive: true });
+    await mkdir(join(home, ".gemini"), { recursive: true });
 
     await write(
       join(sourceDir, "local-tool", "SKILL.md"),
@@ -119,6 +121,8 @@ test("sync generates per-consumer skills from local, command, and git sources", 
     const result = await syncSkills({ sourceDir, home, cacheDir: join(root, "cache") });
     assert.deepEqual(result.errors, []);
     assert.deepEqual(result.written.sort(), [
+      "antigravity/local-tool",
+      "antigravity/remote",
       "codex/local-tool",
       "codex/remote",
       "pi/from-command",
@@ -137,6 +141,11 @@ test("sync generates per-consumer skills from local, command, and git sources", 
     );
     assert.ok(await exists(join(home, ".pi/agent/skills/local-tool", MARKER_FILE)));
     assert.ok(!(await exists(join(home, ".pi/agent/skills/local-tool/agents/openai.yaml"))));
+
+    const antigravityLocal = await readFile(join(home, ".gemini/config/skills/local-tool/SKILL.md"), "utf8");
+    assert.match(antigravityLocal, /disable-model-invocation: true/);
+    assert.match(antigravityLocal, /Run `~\/\.gemini\/config\/skills\/local-tool\/scripts\/run\.sh`/);
+    assert.ok(!(await exists(join(home, ".gemini/config/skills/local-tool/agents/openai.yaml"))));
 
     const codexLocal = parseSkillFile(await readFile(join(home, ".codex/skills/local-tool/SKILL.md"), "utf8"), "x");
     assert.deepEqual(codexLocal.frontmatter, { name: "local-tool", description: "Local tool." });
@@ -232,11 +241,16 @@ test("sync copies global instructions over existing files and symlinks", async (
     await write(linkTarget, "Elsewhere.\n");
     await mkdir(join(home, ".codex"), { recursive: true });
     await symlink(linkTarget, join(home, ".codex", "AGENTS.md"));
+    await mkdir(join(home, ".gemini"), { recursive: true });
 
     const result = await syncSkills(options);
     assert.deepEqual(result.errors, []);
-    assert.deepEqual(result.written.sort(), ["claude/CLAUDE.md", "codex/AGENTS.md"]);
-    for (const dest of [join(home, ".claude", "CLAUDE.md"), join(home, ".codex", "AGENTS.md")]) {
+    assert.deepEqual(result.written.sort(), ["antigravity/AGENTS.md", "claude/CLAUDE.md", "codex/AGENTS.md"]);
+    for (const dest of [
+      join(home, ".claude", "CLAUDE.md"),
+      join(home, ".codex", "AGENTS.md"),
+      join(home, ".gemini", "AGENTS.md"),
+    ]) {
       assert.ok(!(await lstat(dest)).isSymbolicLink());
       assert.equal(await readFile(dest, "utf8"), "Be brief.\n");
     }

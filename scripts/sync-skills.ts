@@ -3,10 +3,10 @@
  * Generate every agent's skill directory from ./skills, the single source of truth.
  *
  * Each ./skills/<name>/ holds a SKILL.md and any supporting files. Its frontmatter is a superset
- * of the Agent Skills, Pi, Codex, and Claude Code fields; each consumer receives only the fields
- * it understands. Two extra keys are consumed here and never emitted:
+ * of the Agent Skills, Pi, Codex, Claude Code, and Antigravity fields; each consumer receives only
+ * the fields it understands. Two extra keys are consumed here and never emitted:
  *
- *   targets: [pi, codex, claude]   # default: all
+ *   targets: [pi, codex, claude, antigravity]   # default: all
  *   source:                        # optional; exactly one of `command` or `git`
  *     command: herdr --skill       # stdout is a SKILL.md
  *     git: https://github.com/github/gh-stack
@@ -29,26 +29,36 @@
  * applies) keeps its previous output and makes the script exit non-zero.
  *
  * ~/.pi/agent/AGENTS.md, which Pi reads in place, is also copied over Claude Code's CLAUDE.md and
- * Codex's AGENTS.md.
+ * the AGENTS.md of Codex and Antigravity.
  */
 import { chmod, copyFile, cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
-export type Target = "pi" | "codex" | "claude";
-export const TARGETS: Target[] = ["pi", "codex", "claude"];
+export type Target = "pi" | "codex" | "claude" | "antigravity";
+export const TARGETS: Target[] = ["pi", "codex", "claude", "antigravity"];
 
-/** Each consumer's config directory, relative to home; skills are generated into its `skills/`. */
+/** Each consumer's config directory, relative to home. */
 const TARGET_CONFIG_DIRS: Record<Target, string> = {
   pi: ".pi/agent",
   codex: ".codex",
   claude: ".claude",
+  antigravity: ".gemini",
+};
+
+/** Each consumer's generated skills directory, relative to its config directory. */
+const TARGET_SKILLS_DIRS: Record<Target, string> = {
+  pi: "skills",
+  codex: "skills",
+  claude: "skills",
+  antigravity: "config/skills",
 };
 
 /** Each consumer's global instructions file, relative to its config directory. */
 const INSTRUCTIONS_FILES: Partial<Record<Target, string>> = {
   codex: "AGENTS.md",
   claude: "CLAUDE.md",
+  antigravity: "AGENTS.md",
 };
 
 const SPEC_FIELDS = ["name", "description", "license", "compatibility", "metadata", "allowed-tools"];
@@ -69,6 +79,7 @@ const TARGET_FIELDS: Record<Target, Set<string>> = {
     "hooks",
     "paths",
   ]),
+  antigravity: new Set([...SPEC_FIELDS, "disable-model-invocation"]),
 };
 const KNOWN_FIELDS = new Set(Object.values(TARGET_FIELDS).flatMap((fields) => [...fields]));
 
@@ -150,7 +161,7 @@ export function targetFrontmatter(frontmatter: Frontmatter, target: Target): Fro
 }
 
 export function skillDirFor(target: Target, name: string): string {
-  return `~/${TARGET_CONFIG_DIRS[target]}/skills/${name}`;
+  return `~/${TARGET_CONFIG_DIRS[target]}/${TARGET_SKILLS_DIRS[target]}/${name}`;
 }
 
 function parseTargets(value: unknown, label: string): Target[] {
@@ -462,7 +473,7 @@ async function syncWith(
       log(`${target}: ${configDir} does not exist, skipping`);
       continue;
     }
-    const root = join(configDir, "skills");
+    const root = join(configDir, TARGET_SKILLS_DIRS[target]);
     const staging = join(root, ".sync-staging");
     await rm(staging, { recursive: true, force: true });
     await mkdir(staging, { recursive: true });

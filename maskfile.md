@@ -80,10 +80,10 @@ bun test ./agent/tests
 
 ## sync-skills
 
-> Regenerate the Pi, Codex, and Claude Code skill directories from `./skills`.
+> Regenerate the Pi, Codex, Claude Code, and Antigravity skill directories from `./skills`.
 
 Runs `scripts/sync-skills.ts`. Never edit the generated copies under `agent/skills/`,
-`~/.codex/skills/`, or `~/.claude/skills/`; edit `./skills/<name>/` instead.
+`~/.codex/skills/`, `~/.claude/skills/`, or `~/.gemini/config/skills/`; edit `./skills/<name>/` instead.
 
 ```nu
 cd $env.MASKFILE_DIR
