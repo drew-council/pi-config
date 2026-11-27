@@ -64,6 +64,9 @@ test("model blacklist exposes only approved OpenRouter models", () => {
     { provider: "openrouter", id: "deepseek/deepseek-v4.1-flash-1017" },
     { provider: "openrouter", id: "deepseek/deepseek-v4-flash" },
     { provider: "openrouter", id: "z-ai/glm-4.6" },
+    { provider: "openrouter", id: "moonshotai/kimi-k3" },
+    { provider: "openrouter", id: "moonshotai/kimi-k3.1-pro" },
+    { provider: "openrouter", id: "~moonshotai/kimi-latest" },
     { provider: "z-ai", id: "glm-5.3-flash" },
   ];
 
@@ -73,6 +76,7 @@ test("model blacklist exposes only approved OpenRouter models", () => {
       "openrouter/z-ai/glm-5.3-flash",
       "openrouter/z-ai/glm-5.3",
       "openrouter/deepseek/deepseek-v4.1-flash-1017",
+      "openrouter/moonshotai/kimi-k3",
       "z-ai/glm-5.3-flash",
     ],
   );

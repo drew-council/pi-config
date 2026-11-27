@@ -11,7 +11,7 @@ export const MODEL_BLACKLIST = [
   /^grok-(?:[0-3](?:\.\d+)?|4(?:\.[0-4])?(?:$|-))/i,
   /^gpt-(?:[0-4](?:\.\d+)?|5(?:\.[0-5])?(?:$|-))/i,
   /^claude-(?:(?:opus|sonnet|haiku|fable)-[0-4]|[0-4])(?:[-.]\d+)*(?:$|-)/i,
-  /^openrouter\/(?!(?:z-ai\/glm-5\.3(?:-flash)?|deepseek\/deepseek-v4\.1-flash-1017|mistralai\/mistral-large-4(?:-0)?)$)/i,
+  /^openrouter\/(?!(?:z-ai\/glm-5\.3(?:-flash)?|deepseek\/deepseek-v4\.1-flash-1017|mistralai\/mistral-large-4(?:-0)?|moonshotai\/kimi-k3)$)/i,
   // The same models as OpenRouter, pinned.
   // Routers (`*-latest`, `*-fast`) are excluded,
   // except the version-pinned DeepSeek 1017 ultra-fast deployment.
